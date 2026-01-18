@@ -1,0 +1,820 @@
+/**
+ * @OnlyCurrentDoc
+ */
+
+/**
+ * MIT License
+ * Copyright (c) 2026 David Knuffke
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+// --- CONFIGURATION MANAGEMENT ---
+const DEFAULT_CONFIG = {
+  // Start month of the school year (0 = Jan, 6 = Jul)
+  startMonth: 6,
+
+  // Keywords to identify holidays in the notes column
+  holidayKeywords: [
+    'holiday', 'break', 'conference', 'inservice', 'start',
+    'psat', 'day', 'confs', 'egg'
+  ],
+
+  // Styles and Colors
+  styles: {
+    fontFamily: 'Roboto, sans-serif',
+    borderColor: '#dadce0', // Subtle Google Grey
+    header: { background: '#f1f3f4', fontColor: '#5f6368' },
+    day: { weekday: '#ffffff' },
+    emptyDay: { background: '#f8f9fa' },
+
+    // Modern Pastel Palette (Month 1 -> Month 12)
+    // High contrast pairs: Light background, Darker font accent
+    monthColors: [
+      { background: '#e1bee7', font: '#4a148c' }, // Purple
+      { background: '#d1c4e9', font: '#311b92' }, // Deep Purple
+      { background: '#c5cae9', font: '#1a237e' }, // Indigo
+      { background: '#bbdefb', font: '#0d47a1' }, // Blue
+      { background: '#b3e5fc', font: '#01579b' }, // Light Blue
+      { background: '#b2ebf2', font: '#006064' }, // Cyan
+      { background: '#b2dfdb', font: '#004d40' }, // Teal
+      { background: '#c8e6c9', font: '#1b5e20' }, // Green
+      { background: '#dcedc8', font: '#33691e' }, // Light Green
+      { background: '#fff9c4', font: '#f57f17' }, // Yellow
+      { background: '#ffecb3', font: '#ff6f00' }, // Amber
+      { background: '#ffe0b2', font: '#e65100' }, // Orange
+    ]
+  }
+};
+
+/**
+ * Loads configuration from Document Properties, merging with defaults.
+ */
+function loadConfig() {
+  const props = PropertiesService.getDocumentProperties();
+  const saved = props.getProperty('CALENDAR_CONFIG');
+  if (saved) {
+    const parsed = JSON.parse(saved);
+    // Merge styles carefully to ensure new properties like fontFamily exist
+    const merged = { ...DEFAULT_CONFIG, ...parsed };
+    merged.styles = { ...DEFAULT_CONFIG.styles, ...(parsed.styles || {}) };
+    return merged;
+  }
+  return DEFAULT_CONFIG;
+}
+
+/**
+ * Saves configuration to Document Properties.
+ */
+function saveConfig(newConfig) {
+  PropertiesService.getDocumentProperties().setProperty('CALENDAR_CONFIG', JSON.stringify(newConfig));
+}
+
+
+// --- CUSTOM MENU ---
+/**
+ * Creates a custom menu in the spreadsheet UI.
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Calendar Tools')
+    .addItem('ℹ️ Help & Tutorial', 'showTutorialSidebar')
+    .addItem('⚙️ Configuration', 'configureSettings')
+    .addSeparator()
+    .addItem('Create Wall Calendar View', 'createWallCalendar')
+    .addItem('Create Lateral Calendar View', 'createLateralCalendar')
+    .addToUi();
+}
+
+// --- DATA PARSING LOGIC ---
+/**
+ * Helper function to convert month abbreviations to a month index (0-11).
+ */
+function getMonthIndex(monthAbbr) {
+  if (!monthAbbr) return undefined;
+  const months = { 'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5, 'jul': 6, 'aug': 7, 'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11 };
+  return months[monthAbbr.substring(0, 3).toLowerCase()];
+}
+
+/**
+ * Parses the pacing chart data.
+ */
+function parsePacingData(sheet, startYear, config) {
+  const data = sheet.getDataRange().getValues();
+  const eventMap = {};
+  const timeZone = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  let currentYear = startYear;
+
+  // Helper to initialize day object
+  const initDay = () => ({ block: '', holiday: '', classInfo: [], notes: [] });
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const classNumber = row[0];
+    const date1 = row[1] ? new Date(row[1]) : null;
+    const date2 = row[2] ? new Date(row[2]) : null;
+    const dayType = row[3] || '';
+    const notes = row[4] || '';
+
+    // Adjust year if date passes threshold (simple heuristic)
+    if (date1 && date1.getMonth() < config.startMonth) {
+      currentYear = startYear + 1;
+    }
+
+    if (classNumber && !isNaN(classNumber)) {
+      if (date1 && date1.getTime()) {
+        const key1 = Utilities.formatDate(date1, timeZone, "yyyy-MM-dd");
+        if (!eventMap[key1]) eventMap[key1] = initDay();
+        eventMap[key1].block = (dayType === 'A/B') ? 'A' : (dayType === 'C/D') ? 'C' : dayType;
+        eventMap[key1].classInfo.push(`Class ${classNumber}`);
+      }
+      if (date2 && date2.getTime() && (!date1 || date1.getTime() !== date2.getTime())) {
+        const key2 = Utilities.formatDate(date2, timeZone, "yyyy-MM-dd");
+        if (!eventMap[key2]) eventMap[key2] = initDay();
+        eventMap[key2].block = (dayType === 'A/B') ? 'B' : (dayType === 'C/D') ? 'D' : dayType;
+        eventMap[key2].classInfo.push(`Class ${classNumber}`);
+      }
+    } else if (!classNumber && dayType && date1 && date1.getTime()) {
+      const key1 = Utilities.formatDate(date1, timeZone, "yyyy-MM-dd");
+      if (!eventMap[key1]) eventMap[key1] = initDay();
+      eventMap[key1].holiday = dayType;
+    }
+
+    if (!notes) continue;
+    const noteLines = notes.split('\n');
+    for (const line of noteLines) {
+      const crossMonthRegex = /(\d{1,2})\s+([a-zA-Z]+)\s*-\s*(\d{1,2})\s+([a-zA-Z]+)/;
+      const rangeRegex = /(\d{1,2})-(\d{1,2})\s+([a-zA-Z]+)/;
+      const singleDayRegex = /(\d{1,2})\s+([a-zA-Z]+)/;
+      let match;
+      const description = line.includes(':') ? line.split(':').slice(1).join(':').trim() : line;
+
+      if ((match = line.match(crossMonthRegex))) {
+        const startDay = parseInt(match[1]), startMonth = getMonthIndex(match[2]);
+        const endDay = parseInt(match[3]), endMonth = getMonthIndex(match[4]);
+        if (startMonth === undefined || endMonth === undefined) continue;
+        let startYear = currentYear, endYear = (startMonth > endMonth) ? currentYear + 1 : currentYear;
+        const startDate = new Date(startYear, startMonth, startDay);
+        const endDate = new Date(endYear, endMonth, endDay);
+        for (let d = new Date(startDate.getTime()); d <= endDate; d.setDate(d.getDate() + 1)) {
+          const key = Utilities.formatDate(d, timeZone, "yyyy-MM-dd");
+          if (!eventMap[key]) eventMap[key] = initDay();
+          eventMap[key].holiday = description;
+        }
+      } else if ((match = line.match(rangeRegex))) {
+        const startDay = parseInt(match[1]), endDay = parseInt(match[2]), monthIndex = getMonthIndex(match[3]);
+        if (monthIndex === undefined) continue;
+        for (let day = startDay; day <= endDay; day++) {
+          const eventDate = new Date(currentYear, monthIndex, day);
+          const key = Utilities.formatDate(eventDate, timeZone, "yyyy-MM-dd");
+          if (!eventMap[key]) eventMap[key] = initDay();
+          eventMap[key].holiday = description;
+        }
+      } else if ((match = line.match(singleDayRegex))) {
+        const day = parseInt(match[1]), monthIndex = getMonthIndex(match[2]);
+        if (monthIndex === undefined) continue;
+        const eventDate = new Date(currentYear, monthIndex, day);
+        const key = Utilities.formatDate(eventDate, timeZone, "yyyy-MM-dd");
+        if (!eventMap[key]) eventMap[key] = initDay();
+
+        if (config.holidayKeywords.some(k => description.toLowerCase().includes(k))) {
+          eventMap[key].holiday = description;
+        } else {
+          eventMap[key].notes.push(description);
+        }
+      }
+    }
+  }
+  return eventMap;
+}
+
+
+// --- RICH TEXT HELPER FUNCTIONS ---
+/**
+ * Shared helper to build a RichTextValue with bolded segments.
+ */
+function createRichText(textParts, boldSegments) {
+  const fullText = textParts.join('');
+  if (!fullText) {
+    return SpreadsheetApp.newRichTextValue().setText('').build();
+  }
+
+  const boldStyle = SpreadsheetApp.newTextStyle().setBold(true).build();
+  const builder = SpreadsheetApp.newRichTextValue().setText(fullText);
+
+  boldSegments.forEach(segment => {
+    // Ensure bounds are valid
+    if (segment.start >= 0 && segment.end <= fullText.length) {
+      builder.setTextStyle(segment.start, segment.end, boldStyle);
+    }
+  });
+
+  return builder.build();
+}
+
+/**
+ * Builds a RichTextValue for a cell in the Wall Calendar. Bolds holidays and notes.
+ */
+function buildWallCalendarRichText(dayData, dayNumber, dayOfWeekStr) {
+  const textParts = [];
+  const boldSegments = [];
+  let currentLength = 0;
+
+  const firstLineNormal = `${dayNumber} ${dayOfWeekStr} `;
+  textParts.push(firstLineNormal);
+  currentLength += firstLineNormal.length;
+
+  if (dayData) {
+    if (dayData.block) {
+      const blockText = `(${dayData.block}) `;
+      textParts.push(blockText);
+      currentLength += blockText.length;
+    }
+    if (dayData.holiday) {
+      const holidayText = `- ${dayData.holiday}`;
+      boldSegments.push({ start: currentLength, end: currentLength + holidayText.length });
+      textParts.push(holidayText);
+      currentLength += holidayText.length;
+    }
+
+    dayData.classInfo.forEach(info => {
+      const classText = `\n${info}`;
+      textParts.push(classText);
+      currentLength += classText.length;
+    });
+    dayData.notes.forEach(note => {
+      const noteText = `\n${note}`;
+      boldSegments.push({ start: currentLength, end: currentLength + noteText.length });
+      textParts.push(noteText);
+      currentLength += noteText.length;
+    });
+  }
+
+  return createRichText(textParts, boldSegments);
+}
+
+/**
+ * Builds a RichTextValue for a cell in the Lateral Calendar. Bolds holidays and notes.
+ */
+function buildLateralCalendarRichText(dayData, dayOfWeekStr) {
+  const textParts = [dayOfWeekStr];
+  const boldSegments = [];
+  let currentLength = dayOfWeekStr.length;
+
+  if (dayData) {
+    if (dayData.block) {
+      const blockText = `     (${dayData.block})`;
+      textParts.push(blockText);
+      currentLength += blockText.length;
+    }
+    if (dayData.holiday) {
+      const holidayText = `\n${dayData.holiday}`;
+      boldSegments.push({ start: currentLength, end: currentLength + holidayText.length });
+      textParts.push(holidayText);
+      currentLength += holidayText.length;
+    }
+    dayData.classInfo.forEach(info => {
+      const classText = `\n${info}`;
+      textParts.push(classText);
+      currentLength += classText.length;
+    });
+    dayData.notes.forEach(note => {
+      const noteText = `\n${note}`;
+      boldSegments.push({ start: currentLength, end: currentLength + noteText.length });
+      textParts.push(noteText);
+      currentLength += noteText.length;
+    });
+  }
+
+  return createRichText(textParts, boldSegments);
+}
+
+
+// --- WALL CALENDAR DRAWING FUNCTION ---
+/**
+ * Draws a single month's calendar grid onto a sheet using Rich Text.
+ * Now optimized to batch RichText writes.
+ */
+function drawMonth(sheet, year, month, startRow, eventData, monthCounter, config) {
+  const timeZone = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  const monthName = Utilities.formatDate(new Date(year, month), timeZone, "MMMM yyyy");
+
+  const currentMonthStyle = config.styles.monthColors[monthCounter % 12];
+  const borderCol = config.styles.borderColor || '#999';
+
+  // Set consistent row heights for headers
+  sheet.setRowHeight(startRow, 50);
+  sheet.setRowHeight(startRow + 1, 30);
+
+  // Apply month header styling.
+  sheet.getRange(startRow, 1, 1, 7).merge().setValue(monthName)
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle')
+    .setFontWeight('bold')
+    .setFontSize(22)
+    .setFontFamily(config.styles.fontFamily)
+    .setBackground(currentMonthStyle.background)
+    .setFontColor(currentMonthStyle.font)
+    .setBorder(true, true, true, true, null, null, borderCol, SpreadsheetApp.BorderStyle.SOLID);
+
+  // Apply weekday header styling.
+  const weekDays = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+  sheet.getRange(startRow + 1, 1, 1, 7).setValues([weekDays])
+    .setFontWeight('bold')
+    .setFontSize(10)
+    .setFontFamily(config.styles.fontFamily)
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle')
+    .setBackground(config.styles.header.background)
+    .setFontColor(config.styles.header.fontColor)
+    .setBorder(null, true, true, true, true, null, borderCol, SpreadsheetApp.BorderStyle.SOLID);
+
+  const gridStartRow = startRow + 2;
+  const backgroundColors = [];
+  const richTextGrid = []; // 2D array for batched writing
+
+  let currentDay = 1;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfWeek = new Date(year, month, 1).getDay();
+
+  for (let week = 0; week < 6; week++) {
+    const currentRow = gridStartRow + week;
+    const rowBackgrounds = [];
+    const rowRichTexts = [];
+
+    sheet.setRowHeight(currentRow, 120);
+
+    for (let day = 0; day < 7; day++) {
+      // Determine if cell is part of the month
+      const isDayCell = !((week === 0 && day < firstDayOfWeek) || currentDay > daysInMonth);
+
+      if (!isDayCell) {
+        rowBackgrounds.push(config.styles.emptyDay.background);
+        rowRichTexts.push(SpreadsheetApp.newRichTextValue().setText('').build());
+      } else {
+        // Background Logic
+        // Use a subtle alternative color for weekends if desired, else check config
+        if (day === 0 || day === 6) {
+          rowBackgrounds.push(config.styles.emptyDay.background); // Using empty color for weekends for subtle texture
+        } else {
+          rowBackgrounds.push(config.styles.day.weekday);
+        }
+
+        // Content Logic
+        const currentDate = new Date(year, month, currentDay);
+        const dayOfWeekStr = Utilities.formatDate(currentDate, timeZone, "E");
+        const dateKey = Utilities.formatDate(currentDate, timeZone, "yyyy-MM-dd");
+        const dayData = eventData[dateKey];
+
+        rowRichTexts.push(buildWallCalendarRichText(dayData, currentDay, dayOfWeekStr));
+
+        currentDay++;
+      }
+    }
+    backgroundColors.push(rowBackgrounds);
+    richTextGrid.push(rowRichTexts);
+
+    if (currentDay > daysInMonth) break;
+  }
+
+  const numWeeks = backgroundColors.length;
+  if (numWeeks > 0) {
+    const range = sheet.getRange(gridStartRow, 1, numWeeks, 7);
+    range.setBackgrounds(backgroundColors);
+    range.setRichTextValues(richTextGrid); // BATCHED WRITE
+
+    range.setVerticalAlignment('top').setWrap(true).setFontSize(10).setFontFamily(config.styles.fontFamily);
+    range.setBorder(true, true, true, true, true, true, borderCol, SpreadsheetApp.BorderStyle.SOLID);
+  }
+
+  return gridStartRow + numWeeks;
+}
+
+// --- LATERAL CALENDAR DRAWING FUNCTION ---
+/**
+ * Draws the lateral calendar layout using the new color scheme while keeping the data.
+ */
+function drawLateralCalendarLayout(sheet, eventData, startYear, config) {
+  const timeZone = SpreadsheetApp.getActive().getSpreadsheetTimeZone();
+  const schoolYearStart = new Date(startYear, config.startMonth, 1);
+  const borderCol = config.styles.borderColor || '#999';
+
+  // --- HEADER SETUP ---
+  const dayNumberHeader = ['MONTH'];
+  for (let day = 1; day <= 31; day++) {
+    dayNumberHeader.push(day);
+  }
+
+  const headerRange = sheet.getRange(1, 1, 1, 32);
+  headerRange.setValues([dayNumberHeader])
+    .setBackground(config.styles.header.background)
+    .setFontColor(config.styles.header.fontColor)
+    .setFontWeight('bold')
+    .setFontSize(10)
+    .setFontFamily(config.styles.fontFamily)
+    .setHorizontalAlignment('center')
+    .setBorder(true, true, true, true, true, true, borderCol, SpreadsheetApp.BorderStyle.SOLID);
+
+  // --- CALENDAR GRID GENERATION ---
+
+  const allBackgrounds = [];
+  const allRichTexts = [];
+  const allMonthNames = [];
+  const startRow = 2;
+  const totalMonths = 12;
+
+  for (let i = 0; i < totalMonths; i++) {
+    const currentDate = new Date(schoolYearStart.getFullYear(), schoolYearStart.getMonth() + i, 1);
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+
+    const monthAbbr = Utilities.formatDate(currentDate, timeZone, "MMM").toUpperCase();
+    allMonthNames.push([monthAbbr]);
+
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const currentMonthStyle = config.styles.monthColors[i % 12];
+
+    const rowRichTexts = [];
+    const rowBackgrounds = [];
+
+    // Note: The grid is 31 columns wide (Days 1-31)
+    for (let day = 1; day <= 31; day++) {
+      if (day > daysInMonth) {
+        rowBackgrounds.push(config.styles.emptyDay.background);
+        rowRichTexts.push(SpreadsheetApp.newRichTextValue().setText('').build());
+      } else {
+        const date = new Date(year, month, day);
+        const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+
+        if (dayOfWeek === 0 || dayOfWeek === 6) { // Weekend
+          rowBackgrounds.push(config.styles.emptyDay.background); // Texture for weekends
+        } else { // Weekday
+          rowBackgrounds.push(config.styles.day.weekday);
+        }
+
+        const dayOfWeekStr = Utilities.formatDate(date, timeZone, "E");
+        const dateKey = Utilities.formatDate(date, timeZone, "yyyy-MM-dd");
+        const dayData = eventData[dateKey];
+        rowRichTexts.push(buildLateralCalendarRichText(dayData, dayOfWeekStr));
+      }
+    }
+    allBackgrounds.push(rowBackgrounds);
+    allRichTexts.push(rowRichTexts);
+  }
+
+  // --- BATCH WRITE ---
+  // 0. Global formatting (Defaults)
+  // Apply defaults first so specific column formatting can override them.
+  sheet.getRange(startRow, 1, totalMonths, 32)
+    .setVerticalAlignment('top')
+    .setWrap(true)
+    .setFontSize(9)
+    .setFontFamily(config.styles.fontFamily)
+    .setBorder(true, true, true, true, true, true, borderCol, SpreadsheetApp.BorderStyle.SOLID);
+
+  // 1. Month Names Column (Col 1)
+  const monthColRange = sheet.getRange(startRow, 1, totalMonths, 1);
+  monthColRange.setValues(allMonthNames);
+
+  // Style month names
+  const monthColBackgrounds = [];
+  const monthColFontColors = [];
+
+  for (let i = 0; i < totalMonths; i++) {
+    const style = config.styles.monthColors[i % 12];
+    monthColBackgrounds.push([style.background]); // Colored background for the sidebar
+    monthColFontColors.push([style.font]); // Font color
+  }
+  monthColRange.setBackgrounds(monthColBackgrounds).setFontColors(monthColFontColors);
+  monthColRange.setFontWeight('bold').setFontSize(48).setFontFamily(config.styles.fontFamily)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle')
+    .setBorder(true, true, true, true, null, true, borderCol, SpreadsheetApp.BorderStyle.SOLID);
+
+  // 2. Calendar Grid (Cols 2-32)
+  const gridRange = sheet.getRange(startRow, 2, totalMonths, 31);
+  gridRange.setBackgrounds(allBackgrounds);
+  gridRange.setRichTextValues(allRichTexts);
+
+  // 3. Row formatting
+  for (let i = 0; i < totalMonths; i++) {
+    sheet.setRowHeight(startRow + i, 115);
+  }
+
+  // --- FINAL FORMATTING ---
+  sheet.setFrozenRows(1);
+  sheet.setFrozenColumns(1);
+  sheet.setColumnWidth(1, 150);
+  sheet.setColumnWidths(2, 31, 120);
+}
+
+
+// --- MAIN FUNCTIONS ---
+/**
+ * Main function to generate the wall calendar view.
+ */
+function createWallCalendar() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sourceSheet = ss.getActiveSheet();
+  const sourceSheetName = sourceSheet.getName();
+  const targetSheetName = "Wall Calendar View";
+
+  const config = loadConfig();
+
+  const startYearMatch = sourceSheetName.match(/^(\d{4})-\d{4}$/);
+  if (!startYearMatch) {
+    ui.alert('Invalid Sheet Name', 'The active sheet name must be in the format "YYYY-YYYY" (e.g., "2025-2026").', ui.ButtonSet.OK);
+    return;
+  }
+  const startYear = parseInt(startYearMatch[1], 10);
+
+  const eventData = parsePacingData(sourceSheet, startYear, config);
+
+  let targetSheet = ss.getSheetByName(targetSheetName);
+  if (targetSheet) {
+    ss.deleteSheet(targetSheet);
+  }
+  targetSheet = ss.insertSheet(targetSheetName);
+
+  // Adjusted column widths for cleaner fit
+  targetSheet.setColumnWidths(1, 7, 140);
+
+  let currentRowOnSheet = 1;
+  // Use a predictable loop to avoid date object mutation issues.
+  for (let i = 0; i < 12; i++) {
+    // School year starts in CONFIG.startMonth
+    const currentMonthDate = new Date(startYear, config.startMonth + i, 1);
+    const year = currentMonthDate.getFullYear();
+    const month = currentMonthDate.getMonth();
+
+    currentRowOnSheet = drawMonth(targetSheet, year, month, currentRowOnSheet, eventData, i, config);
+
+    // Only add a blank spacer row if it's not the last month.
+    if (i < 11) {
+      currentRowOnSheet += 1;
+    }
+  }
+
+  // Hide extra columns for neatness
+  const maxCols = targetSheet.getMaxColumns();
+  if (maxCols > 7) {
+    targetSheet.deleteColumns(8, maxCols - 7);
+  }
+
+  // After generating content, remove any surplus empty rows at the bottom.
+  const lastRow = targetSheet.getLastRow();
+  const maxRows = targetSheet.getMaxRows();
+  if (maxRows > lastRow) {
+    targetSheet.deleteRows(lastRow + 1, maxRows - lastRow);
+  }
+
+  ui.alert('Success! Your "Wall Calendar View" sheet has been created.');
+}
+
+/**
+ * Main function to generate the lateral calendar view.
+ */
+function createLateralCalendar() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sourceSheet = ss.getActiveSheet();
+  const sourceSheetName = sourceSheet.getName();
+  const targetSheetName = "Lateral Calendar View";
+
+  const config = loadConfig();
+
+  const startYearMatch = sourceSheetName.match(/^(\d{4})-\d{4}$/);
+  if (!startYearMatch) {
+    ui.alert('Invalid Sheet Name', 'The active sheet name must be in the format "YYYY-YYYY" (e.g., "2025-2026").', ui.ButtonSet.OK);
+    return;
+  }
+  const startYear = parseInt(startYearMatch[1], 10);
+
+  const eventData = parsePacingData(sourceSheet, startYear, config);
+
+  let targetSheet = ss.getSheetByName(targetSheetName);
+  if (targetSheet) {
+    targetSheet.clear();
+    targetSheet.setFrozenRows(0);
+    targetSheet.setFrozenColumns(0);
+  } else {
+    targetSheet = ss.insertSheet(targetSheetName);
+  }
+
+  drawLateralCalendarLayout(targetSheet, eventData, startYear, config);
+
+  const maxRows = targetSheet.getMaxRows();
+  const maxCols = targetSheet.getMaxColumns();
+
+  if (maxRows > 13) {
+    targetSheet.deleteRows(14, maxRows - 13);
+  }
+  if (maxCols > 32) {
+    targetSheet.deleteColumns(33, maxCols - 32);
+  }
+
+  ui.alert('Success! Your "Lateral Calendar View" sheet has been created.\n\nFor best printing results, please use Landscape orientation and the "Fit to page" scale setting.');
+}
+
+
+// --- SETTINGS DIALOG ---
+/**
+ * Opens the settings modal.
+ */
+function configureSettings() {
+  const config = loadConfig();
+  const html = HtmlService.createHtmlOutput(buildSettingsHtml(config))
+    .setWidth(600)
+    .setHeight(650)
+    .setTitle('Calendarizer Configuration');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Calendarizer Configuration');
+}
+
+function buildSettingsHtml(config) {
+  // Pass config safely to client-side
+  const safeConfig = JSON.stringify(config);
+
+  return `
+    <style>
+      body { font-family: 'Segoe UI', Roboto, sans-serif; padding: 20px; color: #333; background-color: #f9f9f9; }
+      h3 { margin-top: 0; color: #1a73e8; font-size: 16px; border-bottom: 2px solid #e0e0e0; padding-bottom: 8px; margin-bottom: 15px; }
+      
+      .section { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+      
+      label { display: block; font-weight: 500; font-size: 13px; margin-bottom: 5px; color: #555; }
+      select, input[type="text"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
+      .desc { font-size: 12px; color: #666; margin-top: 4px; margin-bottom: 10px; line-height: 1.4; }
+      
+      .color-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+      .color-item { text-align: center; }
+      .color-item label { font-size: 11px; margin-bottom: 2px; }
+      input[type="color"] { width: 100%; height: 30px; border: none; cursor: pointer; background: none; }
+      
+      .btn-container { text-align: right; margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd; }
+      button { padding: 10px 20px; border-radius: 4px; font-weight: 600; cursor: pointer; border: none; font-size: 14px; }
+      .btn-save { background: #1a73e8; color: white; }
+      .btn-save:hover { background: #1557b0; }
+      .btn-cancel { background: transparent; color: #666; margin-right: 10px; }
+      .btn-cancel:hover { text-decoration: underline; }
+    </style>
+
+    <div class="section">
+      <h3>📅 General Settings</h3>
+      <label>School Year Start Month</label>
+      <select id="startMonth">
+        <option value="0">January</option>
+        <option value="5">June</option>
+        <option value="6">July</option>
+        <option value="7">August</option>
+        <option value="8">September</option>
+      </select>
+      <div class="desc">Determines which month comes first in the calendar year cycle.</div>
+    </div>
+
+    <div class="section">
+      <h3>🔍 Parsing Rules</h3>
+      <label>Holiday Keywords (Comma Separated)</label>
+      <input type="text" id="keywords" placeholder="holiday, break, no school...">
+      <div class="desc">Rows in your sheet containing these words in the "Notes" column will be treated as full holidays (bolded, no class info).</div>
+    </div>
+
+    <div class="section">
+      <h3>🎨 Month Colors</h3>
+      <div class="desc">Customize the background color for each month in the cycle (Month 1 = Start Month).</div>
+      <div class="color-grid" id="colorGrid"></div>
+    </div>
+
+    <div class="btn-container">
+      <button class="btn-cancel" onclick="google.script.host.close()">Cancel</button>
+      <button class="btn-save" id="saveBtn" onclick="save()">Save Settings</button>
+    </div>
+
+    <script>
+      const CONFIG = ${safeConfig};
+      
+      // Init
+      document.getElementById('startMonth').value = CONFIG.startMonth;
+      document.getElementById('keywords').value = CONFIG.holidayKeywords.join(', ');
+      
+      // Build Color Inputs
+      const monthNames = ["Month 1", "Month 2", "Month 3", "Month 4", "Month 5", "Month 6", "Month 7", "Month 8", "Month 9", "Month 10", "Month 11", "Month 12"];
+      const grid = document.getElementById('colorGrid');
+      
+      CONFIG.styles.monthColors.forEach((style, idx) => {
+         const div = document.createElement('div');
+         div.className = 'color-item';
+         div.innerHTML = \`
+           <label>\${monthNames[idx]}</label>
+           <input type="color" id="color_\${idx}" value="\${style.background}">
+         \`;
+         grid.appendChild(div);
+      });
+
+      function save() {
+        const btn = document.getElementById('saveBtn');
+        btn.textContent = 'Saving...';
+        btn.disabled = true;
+
+        const newConfig = JSON.parse(JSON.stringify(CONFIG)); // Clone
+        
+        // Update Values
+        newConfig.startMonth = parseInt(document.getElementById('startMonth').value);
+        newConfig.holidayKeywords = document.getElementById('keywords').value.split(',').map(s => s.trim()).filter(s => s !== '');
+        
+        // Update Colors
+        for (let i = 0; i < 12; i++) {
+           const col = document.getElementById('color_' + i).value;
+           newConfig.styles.monthColors[i].background = col;
+        }
+
+        google.script.run
+          .withSuccessHandler(() => google.script.host.close())
+          .withFailureHandler((err) => { alert('Error: ' + err); btn.disabled = false; btn.textContent = 'Save Settings'; })
+          .saveConfig(newConfig);
+      }
+    </script>
+  `;
+}
+
+
+// --- TUTORIAL SIDEBAR ---
+/**
+ * Shows the tutorial sidebar.
+ */
+function showTutorialSidebar() {
+  const html = HtmlService.createHtmlOutput(buildTutorialHtml())
+    .setTitle('Calendarizer Guide')
+    .setWidth(300);
+  SpreadsheetApp.getUi().showSidebar(html);
+}
+
+function buildTutorialHtml() {
+  return `
+    <style>
+      body { font-family: 'Segoe UI', Roboto, sans-serif; font-size: 14px; padding: 15px; color: #333; line-height: 1.5; }
+      h3 { margin-top: 20px; color: #1a73e8; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+      h3:first-of-type { margin-top: 0; }
+      .card { background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+      .step { display: flex; gap: 10px; margin-bottom: 8px; align-items: flex-start; }
+      .num { background: #1a73e8; color: white; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; margin-top: 2px; }
+      .section-title { font-weight: 700; color: #5f6368; margin-bottom: 5px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 15px; }
+      .menu-item { margin-bottom: 8px; }
+      .menu-name { font-weight: 600; color: #202124; }
+      .menu-desc { font-size: 13px; color: #5f6368; margin-top: 2px; }
+    </style>
+    
+    <h3>🗓️ Calendarizer Guide</h3>
+    <p>Visualize your pacing chart as a Wall Calendar or Lateral Calendar.</p>
+
+    <div class="card">
+        <div style="font-weight:bold; margin-bottom:10px;">🚀 Quick Start</div>
+        <div class="step"><div class="num">1</div><div><b>Name Sheet</b>: Name your tab <code>YYYY-YYYY</code> (e.g., <code>2025-2026</code>).</div></div>
+        <div class="step"><div class="num">2</div><div><b>Format</b>: Ensure columns match:
+          <ul style="margin:5px 0 0 -20px;">
+            <li><b>A</b>: Class Number</li>
+            <li><b>B-C</b>: Start/End Dates</li>
+            <li><b>D</b>: Block/Day Type (A, B, or Holiday)</li>
+            <li><b>E</b>: Notes (Holidays)</li>
+          </ul>
+        </div></div>
+        <div class="step"><div class="num">3</div><div><b>Run</b>: Select a view from the menu.</div></div>
+    </div>
+
+    <h3>📖 Menu Reference</h3>
+    
+    <div class="menu-item">
+        <div class="menu-name">Create Wall Calendar View</div>
+        <div class="menu-desc">Generates a traditional monthly calendar grid (July to June). Best for printing by month.</div>
+    </div>
+    <div class="menu-item">
+        <div class="menu-name">Create Lateral Calendar View</div>
+        <div class="menu-desc">Creates a compact linear view relative to the school year logic. Good for seeing the "flow" of the year.</div>
+    </div>
+    <div class="menu-item">
+        <div class="menu-name">⚙️ Configuration</div>
+        <div class="menu-desc">Change the School Year Start Month, customize Holiday Keywords, and edit Calendar Colors.</div>
+    </div>
+
+    <div style="margin-top:20px; font-size:12px; color:#666; text-align:center; border-top: 1px solid #eee; padding-top: 15px;">
+        <p style="margin-bottom:5px;">Developed by <a href="https://knuffke.com/support" target="_blank" style="color:#333; text-decoration:none;"><b>David Knuffke</b></a></p>
+        <p style="font-size:10px; margin-top:5px;">Made available under a <a href="http://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0 License</a>.</p>
+        <a href="#" onclick="google.script.host.close()">Close Guide</a>
+    </div>
+  `;
+}
