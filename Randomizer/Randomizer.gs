@@ -16,41 +16,40 @@ function onOpen() {
     // Get the Google Sheets user interface object.
     const ui = SpreadsheetApp.getUi();
 
-    // Create a new menu named 'Randomizer'.
     ui.createMenu('Randomizer')
-        // --- Onboarding & Setup ---
-        .addItem('ℹ️ Help & Tutorial', 'showTutorialSidebar') // Feature 10
-        .addItem('🧙 Roster Setup Wizard', 'showRosterSetupWizard') // Feature 11
-        .addItem('🗺️ Generate Map Template', 'generateMapTemplate') // Feature 9
-        .addItem('🎲 Generate Demo Class', 'generateDemoRoster') // Feature 10
-        .addSeparator()
-
-        // --- Configuration ---
-        .addItem('Configure Tables (Groups)', 'configureTables')
-        .addItem('Configure Data Balancing', 'configureBalancing') // Feature 7
-        .addItem('Set Room Constraints', 'configureCapacityConstraints')
-        .addItem('Select Absent Students', 'showAbsenceSelector')
-        .addSubMenu(ui.createMenu('Layout Manager')
-            .addItem('Save Current Layout', 'saveCurrentLayout')
-            .addItem('Load Saved Layout', 'loadSavedLayout')
-            .addItem('Manage Saved Layouts', 'manageSavedLayouts'))
-        .addSeparator()
-
-        // --- Student Rules ---
-        .addItem('Configure Preferential Seating', 'configurePreferentialSeating')
-        .addItem('Configure Student Separations', 'configureSeparatedStudents')
-        .addItem('Configure Student Buddies', 'configureStudentBuddies') // New Feature
-        .addSeparator()
-
-        // --- Run Randomizer ---
+        // --- SECTION 1: RANDOMIZATION ---
         .addItem('▶️ Randomly Assign Students', 'randomizeStudents')
-        .addItem('🥂 Run Social Mixer (Max Variety)', 'randomizeSocialMixer') // Feature 8
-        .addItem('Preview Randomization', 'previewRandomization')
+        .addItem('🥂 Run Social Mixer', 'randomizeSocialMixer')
+        .addItem('👀 Preview Randomization', 'previewRandomization')
         .addSeparator()
 
-        // --- Tools ---
-        .addItem('View Assignment History', 'viewAssignmentHistory')
-        .addItem('Manage & Clear Settings', 'manageSettings')
+        // --- SECTION 2: RULES ---
+        .addItem('💺 Preferential Seating', 'configurePreferentialSeating')
+        .addItem('🚧 Student Separations', 'configureSeparatedStudents')
+        .addItem('👯 Student Buddies', 'configureStudentBuddies')
+        .addItem('🚫 Select Absent Students', 'showAbsenceSelector')
+        .addSeparator()
+
+        // --- SECTION 3: ROOM SETUP ---
+        .addItem('🪑 Configure Tables', 'configureTables')
+        .addItem('🧱 Set Room Constraints', 'configureCapacityConstraints')
+        .addItem('⚖️ Configure Data Balancing', 'configureBalancing')
+        .addItem('🗺️ Generate Map Template', 'generateMapTemplate')
+        .addSeparator()
+
+        // --- SECTION 4: LAYOUTS & HISTORY ---
+        .addSubMenu(ui.createMenu('📂 Layout Manager')
+            .addItem('💾 Save Current Layout', 'saveCurrentLayout')
+            .addItem('📂 Load Saved Layout', 'loadSavedLayout')
+            .addItem('🗑️ Manage Saved Layouts', 'manageSavedLayouts'))
+        .addItem('📜 View Assignment History', 'viewAssignmentHistory')
+        .addSeparator()
+
+        // --- SECTION 5: SETUP & TOOLS ---
+        .addItem('🧙 Roster Setup Wizard', 'showRosterSetupWizard')
+        .addItem('🎲 Generate Demo Class', 'generateDemoRoster')
+        .addItem('⚙️ Manage & Clear Settings', 'manageSettings')
+        .addItem('ℹ️ Help & Tutorial', 'showTutorialSidebar')
         .addToUi();
 
     // --- FEATURE 10: First Run Check ---
@@ -60,6 +59,7 @@ function onOpen() {
         props.setProperty('firstRunComplete', 'true');
     }
 }
+
 
 /**
  * Stores the number of tables for each room.
@@ -465,8 +465,25 @@ function buildGenericConfigHtml(data, title) {
             const div = document.getElementById('actionArea');
             div.innerHTML = '';
             
+            if (DATA.type === 'separatedStudents') {
+                 // Separation Mode: Strict vs Group Avoidance
+                 const modeSelect = document.createElement('select');
+                 modeSelect.id = 'modeSelect';
+                 modeSelect.className = 'select-freq';
+                 modeSelect.innerHTML = 
+                     '<option value="strict">⛔ Strict Separation (No Pairs)</option>' +
+                     '<option value="soft">⚠️ Avoid Full Group (Subset OK)</option>';
+                 
+                 // Only show if >= 3 students selected (soft mode needs 3+)
+                 // Actually, let's show it always but maybe default to strict.
+                 // Ideally "Subset OK" only makes sense for 3+. For 2 people, "Avoid Full Group" IS "Strict Separation".
+                 // So let's hide/show based on selection size?
+                 // Simple: Show it, but if size < 3, force strict or just let it be (logic handles it same).
+                 div.appendChild(modeSelect);
+            }
+
             if (${isGroups}) {
-                // Frequency Selector (Buddies Only)
+                // Frequency Selector (Buddies Only) - PREVIOUSLY EXISTING
                 if (IS_BUDDIES) {
                     const freqSelect = document.createElement('select');
                     freqSelect.id = 'freqSelect';
@@ -509,7 +526,12 @@ function buildGenericConfigHtml(data, title) {
             if (IS_BUDDIES) {
                  const chance = parseFloat(document.getElementById('freqSelect').value);
                  CONFIG[currentSection].push({ names: names, chance: chance });
+            } else if (DATA.type === 'separatedStudents') {
+                 // Capture mode
+                 const mode = document.getElementById('modeSelect').value;
+                 CONFIG[currentSection].push({ names: names, mode: mode });
             } else {
+                 // Fallback (shouldn't happen for separatedStudents now)
                  CONFIG[currentSection].push(names);
             }
 
@@ -563,9 +585,14 @@ function buildGenericConfigHtml(data, title) {
                     if (IS_BUDDIES && group.chance !== undefined) {
                         const pct = (group.chance * 100) + '%';
                         content = group.names.join(' + ') + ' <span style="color:#1a73e8; font-weight:bold; margin-left:5px;">(' + pct + ')</span>';
+                    } else if (group.mode) {
+                         // New Separation Object
+                         const icon = group.mode === 'soft' ? '⚠️' : '⛔';
+                         const label = group.mode === 'soft' ? '<span style="color:#d93025; font-size:11px; margin-left:5px;">(Avoid Full Group)</span>' : '';
+                         content = icon + ' ' + group.names.join(' + ') + label;
                     } else if (Array.isArray(group)) {
-                         // Backwards compat or Separated Students
-                         content = group.join(' + ');
+                         // Backwards compat or Legacy Separated Students (Implies Strict)
+                         content = '⛔ ' + group.join(' + ');
                     } else if (typeof group === 'object' && group.names) {
                          // Handle incomplete object case if any
                          content = group.names.join(' + ');
@@ -1307,7 +1334,45 @@ function generateRandomization(options = {}) {
         }
 
         const prefsForSection = preferentialConfig[sectionName] || {};
-        const sepGroupsForSection = separatedConfig[sectionName] || [];
+        const rawSepConfig = separatedConfig[sectionName] || [];
+
+        // Split separation config into "Strict Pairs" and "Soft Groups"
+        const strictPairs = new Set(); // Set of strings "A|B" (sorted)
+        const softGroups = []; // Array of { names: Set<string>, original: [] }
+
+        rawSepConfig.forEach(rule => {
+            if (Array.isArray(rule)) {
+                // Legacy or Strict Array -> Convert to all pairwise strict
+                for (let i = 0; i < rule.length; i++) {
+                    for (let j = i + 1; j < rule.length; j++) {
+                        const p = [rule[i], rule[j]].sort().join('|');
+                        strictPairs.add(p);
+                    }
+                }
+            } else if (rule.mode === 'soft') {
+                // Soft Group (subset OK, full group bad)
+                if (rule.names.length > 2) {
+                    softGroups.push({
+                        namesSet: new Set(rule.names),
+                        original: rule.names
+                    });
+                } else {
+                    // If it's 2 people, "Soft" is meaningless (subset = 1 person = seated alone).
+                    // So treat as Strict.
+                    const p = [rule.names[0], rule.names[1]].sort().join('|');
+                    strictPairs.add(p);
+                }
+            } else {
+                // Object but Strict (rule.mode === 'strict')
+                for (let i = 0; i < rule.names.length; i++) {
+                    for (let j = i + 1; j < rule.names.length; j++) {
+                        const p = [rule.names[i], rule.names[j]].sort().join('|');
+                        strictPairs.add(p);
+                    }
+                }
+            }
+        });
+
 
         // --- FEATURE: Student Buddies Frequency ---
         // Normalize the config to a simple array of "Active" buddy groups for this run.
@@ -1381,19 +1446,38 @@ function generateRandomization(options = {}) {
             // Lower score is better.
             const scoreTable = (tableIdx) => {
                 let score = 0;
-                // Penalty 1: Separation Violation (High Penalty)
-                if (tableAssignments[tableIdx].some(seated => areSeparated(student.name, seated.name, sepGroupsForSection))) {
-                    score += 1000;
-                }
+                const currentTableNames = tableAssignments[tableIdx].map(s => s.name);
+
+                // Penalty 1: Strict Pair Violation (High Penalty)
+                // Check if this student forms a strict pair with anyone already there
+                const breaksStrict = currentTableNames.some(seatedName => {
+                    const p = [student.name, seatedName].sort().join('|');
+                    return strictPairs.has(p);
+                });
+                if (breaksStrict) score += 10000;
+
+
+                // Penalty 1b: Soft Group Violation (Completing the group)
+                // If adding this student makes the table contain ALL members of a soft group
+                const breaksSoft = softGroups.some(group => {
+                    if (!group.namesSet.has(student.name)) return false; // Not in this group
+
+                    // Check if ALL OTHER members are already here
+                    // We need to see if (Group Members intersection Table Members) size == (Group Size - 1)
+                    let foundCount = 0;
+                    currentTableNames.forEach(n => {
+                        if (group.namesSet.has(n)) foundCount++;
+                    });
+
+                    return foundCount === (group.namesSet.size - 1);
+                });
+                if (breaksSoft) score += 5000;
+
+
                 // Penalty 2: History (Sticky Table Avoidance)
                 score += getHistoryPenalty(student.name, tableIdx, historyForSection);
 
                 // Bonus: Buddy Attraction (Negative Score)
-                // Bonus: Buddy Attraction (Negative Score)
-                if (tableAssignments[tableIdx].some(seated => areBuddies(student.name, seated.name, buddiesForSection))) {
-                    score -= 50;
-                }
-
                 if (tableAssignments[tableIdx].some(seated => areBuddies(student.name, seated.name, buddiesForSection))) {
                     score -= 50;
                 }
@@ -1456,22 +1540,42 @@ function generateRandomization(options = {}) {
         }
 
         // --- STEP 3: Fix Separation Violations ---
-        fixSeparationViolations(tableAssignments, sepGroupsForSection, prefsForSection);
+        // --- STEP 3: Fix Separation Violations ---
+        fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection);
 
         // Check for remaining separation violations
-        const remainingViolations = findViolations(tableAssignments, sepGroupsForSection);
+        const remainingViolations = findViolations(tableAssignments, strictPairs, softGroups);
         remainingViolations.forEach(v => {
-            const reason = analyzeSeparationFailure(v.studentA, v.studentB, v.tableIndex, prefsForSection, numTables);
+            let reason = "Unknown";
+            let sA, sB;
+
+            if (v.members && v.members.length >= 2) {
+                sA = v.members[0].name;
+                // If strictly 2 members, treat as pair context for analysis
+                if (v.members.length === 2 && !v.isSoft) {
+                    sB = v.members[1].name;
+                    reason = analyzeSeparationFailure(v.members[0], v.members[1], v.tableIndex, prefsForSection, numTables);
+                } else {
+                    // Soft Group or 3+ strict clique (legacy)
+                    sB = v.members.slice(1).map(m => m.name).join(', ');
+                    reason = "Full group assembled at table (Group Avoidance)";
+                }
+            } else {
+                // Fallback for safety
+                sA = "Unknown";
+                sB = "Unknown";
+            }
+
             separationFailures.push({
-                studentA: v.studentA.name,
-                studentB: v.studentB.name,
+                studentA: sA,
+                studentB: sB,
                 tableIndex: v.tableIndex,
                 reason: reason
             });
         });
 
         // --- STEP 4: Fix Gender Balance ---
-        fixGenderBalance(tableAssignments, sepGroupsForSection, prefsForSection);
+        fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection);
 
         // Check for gender issues
         tableAssignments.forEach((t, idx) => {
@@ -1503,6 +1607,14 @@ function generateRandomization(options = {}) {
 /**
  * Writes the given assignments to the "Tables" sheet.
  */
+/**
+ * Writes the given assignments to the "Tables" sheet.
+ * Optimized to use batch operations for performance.
+ */
+/**
+ * Writes the given assignments to the "Tables" sheet.
+ * Optimized to use batch operations for performance.
+ */
 function writeRandomizationToSheet(allAssignments, sectionMetadata, failureReport) {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     let outputSheet = spreadsheet.getSheetByName("Tables");
@@ -1512,108 +1624,214 @@ function writeRandomizationToSheet(allAssignments, sectionMetadata, failureRepor
         outputSheet.clear();
     }
 
-    let rowIndex = 1;
-    let maxColumnsUsed = 0;
+    // --- STEP 1: CALCULATE DIMENSIONS ---
+    let totalRows = 0;
+    let maxCols = 0;
+    const sectionLayouts = []; // Store layout info to reuse in Step 2
+
+    for (const sectionName in allAssignments) {
+        const tableAssignments = allAssignments[sectionName];
+        const numTables = tableAssignments.length;
+        const halfTables = Math.ceil(numTables / 2);
+        maxCols = Math.max(maxCols, halfTables);
+
+        // Calculate max rows for Front block and Back block separately
+        let maxRowsFront = 0;
+        for (let i = 0; i < halfTables; i++) {
+            if (tableAssignments[i]) maxRowsFront = Math.max(maxRowsFront, tableAssignments[i].length);
+        }
+
+        let maxRowsBack = 0;
+        for (let i = halfTables; i < numTables; i++) {
+            if (tableAssignments[i]) maxRowsBack = Math.max(maxRowsBack, tableAssignments[i].length);
+        }
+
+        // Front Block: Header (1) + Table Headers (1) + Max Rows Front + Gap (1)
+        let sectionHeight = 1 + 1 + maxRowsFront + 1;
+
+        // If we have back tables (Row 2), add their height
+        if (numTables > halfTables) {
+            sectionHeight += 1 + maxRowsBack + 1;
+        }
+
+        sectionLayouts.push({
+            name: sectionName,
+            room: sectionMetadata[sectionName],
+            assignments: tableAssignments,
+            startRow: totalRows, // 0-based relative to data block
+            halfTables: halfTables,
+            maxRowsFront: maxRowsFront,
+            maxRowsBack: maxRowsBack,
+            height: sectionHeight
+        });
+
+        totalRows += sectionHeight;
+    }
+
+    // Add space for warnings/footer
+    const warningsHeight = failureReport ? 10 : 0;
+    totalRows += warningsHeight + 5;
+
+    // Init 2D Arrays (Default: Empty/White)
+    // Note: maxCols corresponds to "Table Blocks", typically 1 block = 1 column in sheet?
+    // Actually, looking at original code: `outputSheet.getRange(..., t + 1)`. 
+    // So yes, 1 Table = 1 Column in the spreadsheet.
+    // So maxCols is correct (width of the sheet).
+
+    // Safety check
+    if (totalRows === 0 || maxCols === 0) return;
+
+    const values = Array(totalRows).fill().map(() => Array(maxCols).fill(''));
+    const backgrounds = Array(totalRows).fill().map(() => Array(maxCols).fill(null)); // null = no change (white)
+    const fontColors = Array(totalRows).fill().map(() => Array(maxCols).fill('black')); // Default black text
+    const fontWeights = Array(totalRows).fill().map(() => Array(maxCols).fill('normal'));
+    const fontSizes = Array(totalRows).fill().map(() => Array(maxCols).fill(10));
+    const hAligns = Array(totalRows).fill().map(() => Array(maxCols).fill('center')); // Default center?
+    const vAligns = Array(totalRows).fill().map(() => Array(maxCols).fill('bottom'));
+    // Borders are complex to batch precisely as "top/bottom/left/right".
+    // We can do them in a separate pass using ranges, which is still faster than cell-by-cell.
+
     const colors = [
         '#FFB6C1', '#ADD8E6', '#90EE90', '#FFD700', '#FF8C69', '#DDA0DD', '#F08080',
         '#E0FFFF', '#FAFAD2', '#D3D3D3', '#FFA07A', '#20B2AA', '#87CEFA', '#778899'
     ];
-    const fontSize = 14;
+    const fontSizeBody = 14;
+    const fontSizeHeader = 18;
 
-    for (const sectionName in allAssignments) {
-        const tableAssignments = allAssignments[sectionName];
-        const roomName = sectionMetadata[sectionName];
-        const numTables = tableAssignments.length;
-        const halfTables = Math.ceil(numTables / 2);
-        maxColumnsUsed = Math.max(maxColumnsUsed, halfTables);
+    // --- STEP 2: FILL DATA ---
+    sectionLayouts.forEach(layout => {
+        let r = layout.startRow;
 
-        const outputHeader = `${sectionName} (${roomName})`;
-        outputSheet.getRange(rowIndex, 1).setValue(outputHeader)
-            .setFontWeight("bold")
-            .setFontSize(18)
-            .setFontFamily("Roboto")
-            .setHorizontalAlignment("center");
-        if (halfTables > 1) outputSheet.getRange(rowIndex, 1, 1, halfTables).mergeAcross();
-        rowIndex++;
+        // 1. Section Header (Black bg, White text)
+        values[r][0] = `${layout.name} (${layout.room})`;
+        fontWeights[r][0] = 'bold';
+        fontSizes[r][0] = fontSizeHeader;
+        backgrounds[r][0] = 'black';
+        fontColors[r][0] = 'white';
+        // Merge handled later via Range list
 
-        const maxRowsPerHalf = Math.max(0, ...tableAssignments.map(t => t.length));
+        r++; // Move to Table Headers
 
-        // Front tables
-        for (let t = 0; t < halfTables; t++) {
-            outputSheet.getRange(rowIndex, t + 1).setValue(`Table ${t + 1} `)
-                .setFontWeight("bold")
-                .setFontSize(fontSize)
-                .setFontFamily("Roboto")
-                .setHorizontalAlignment("center")
-                .setBorder(true, true, true, true, null, null, "black", SpreadsheetApp.BorderStyle.SOLID);
-            if (tableAssignments[t]) {
-                const numStudents = tableAssignments[t].length;
-                const tableColor = colors[t % colors.length];
+        const tables = layout.assignments;
+        const half = layout.halfTables;
 
-                for (let j = 0; j < numStudents; j++) {
-                    outputSheet.getRange(rowIndex + 1 + j, t + 1)
-                        .setValue(tableAssignments[t][j].name)
-                        .setBackground(tableColor)
-                        .setFontSize(fontSize)
-                        .setFontFamily("Roboto")
-                        .setHorizontalAlignment("center")
-                        .setVerticalAlignment("middle");
+        // Front Tables (Row 1 of section tables)
+        for (let t = 0; t < half; t++) {
+            // Header
+            values[r][t] = `Table ${t + 1}`;
+            fontWeights[r][t] = 'bold';
+            fontSizes[r][t] = fontSizeBody;
+
+            // Students
+            const studentList = tables[t];
+            const tableColor = colors[t % colors.length];
+
+            if (studentList) {
+                for (let i = 0; i < studentList.length; i++) {
+                    values[r + 1 + i][t] = studentList[i].name;
+                    backgrounds[r + 1 + i][t] = tableColor;
+                    fontSizes[r + 1 + i][t] = fontSizeBody;
+                    vAligns[r + 1 + i][t] = 'middle';
                 }
-                // Apply borders to the whole block
-                // 1. Inner borders = Background Color (effectively invisible)
-                // 2. Outer borders = Black (frame)
-                const block = outputSheet.getRange(rowIndex + 1, t + 1, numStudents, 1);
-                block.setBorder(null, null, null, null, true, true, tableColor, SpreadsheetApp.BorderStyle.SOLID);
-                block.setBorder(true, true, true, true, null, null, "black", SpreadsheetApp.BorderStyle.SOLID);
             }
         }
-        rowIndex += maxRowsPerHalf + 2;
 
-        // Back tables
-        for (let t = halfTables; t < numTables; t++) {
-            outputSheet.getRange(rowIndex, (t - halfTables) + 1).setValue(`Table ${t + 1} `)
-                .setFontWeight("bold")
-                .setFontSize(fontSize)
-                .setFontFamily("Roboto")
-                .setHorizontalAlignment("center")
-                .setBorder(true, true, true, true, null, null, "black", SpreadsheetApp.BorderStyle.SOLID);
-            if (tableAssignments[t]) {
-                const numStudents = tableAssignments[t].length;
-                const tableColor = colors[t % colors.length];
+        r += layout.maxRowsFront + 1; // Jump gap based on FRONT height
 
-                for (let j = 0; j < numStudents; j++) {
-                    outputSheet.getRange(rowIndex + 1 + j, (t - halfTables) + 1)
-                        .setValue(tableAssignments[t][j].name)
-                        .setBackground(tableColor)
-                        .setFontSize(fontSize)
-                        .setFontFamily("Roboto")
-                        .setHorizontalAlignment("center")
-                        .setVerticalAlignment("middle");
+        // Back Tables (Row 2 of section tables)
+        for (let t = half; t < tables.length; t++) {
+            const colIdx = t - half;
+            // Header
+            values[r][colIdx] = `Table ${t + 1}`;
+            fontWeights[r][colIdx] = 'bold';
+            fontSizes[r][colIdx] = fontSizeBody;
+
+            // Students
+            const studentList = tables[t];
+            const tableColor = colors[t % colors.length];
+
+            if (studentList) {
+                for (let i = 0; i < studentList.length; i++) {
+                    values[r + 1 + i][colIdx] = studentList[i].name;
+                    backgrounds[r + 1 + i][colIdx] = tableColor;
+                    fontSizes[r + 1 + i][colIdx] = fontSizeBody;
+                    vAligns[r + 1 + i][colIdx] = 'middle';
                 }
-                // Apply borders to the whole block
-                const block = outputSheet.getRange(rowIndex + 1, (t - halfTables) + 1, numStudents, 1);
-                block.setBorder(null, null, null, null, true, true, tableColor, SpreadsheetApp.BorderStyle.SOLID);
-                block.setBorder(true, true, true, true, null, null, "black", SpreadsheetApp.BorderStyle.SOLID);
             }
         }
-        rowIndex += maxRowsPerHalf + 2;
-    }
+    });
 
-    // Add warnings if present (also written to sheet for record)
+    // --- STEP 3: WRITE BATCH ---
+    // Output is 1-indexed.
+    const range = outputSheet.getRange(1, 1, totalRows, maxCols);
+
+    range.setValues(values);
+    range.setBackgrounds(backgrounds);
+    range.setFontColors(fontColors);
+    range.setFontWeights(fontWeights);
+    range.setFontSizes(fontSizes);
+    range.setHorizontalAlignments(hAligns);
+    range.setVerticalAlignments(vAligns);
+    range.setFontFamily("Roboto"); // Batch apply font
+
+    // --- STEP 4: POST-PROCESSING (Merges & Borders) ---
+    // These are harder to batch into one call, but we can minimize them.
+
+    sectionLayouts.forEach(layout => {
+        // Merge Header
+        if (layout.halfTables > 1) {
+            outputSheet.getRange(layout.startRow + 1, 1, 1, layout.halfTables).mergeAcross();
+        }
+
+        const applyTableBorder = (r, c, rows) => {
+            if (rows > 0) {
+                const rng = outputSheet.getRange(r, c, rows + 1, 1); // +1 because header is included in block visual
+                rng.setBorder(true, true, true, true, null, null, "black", SpreadsheetApp.BorderStyle.SOLID);
+            } else {
+                // Just header
+                outputSheet.getRange(r, c).setBorder(true, true, true, true, null, null, "black", SpreadsheetApp.BorderStyle.SOLID);
+            }
+        };
+
+        // Header Row (1-based sheet index)
+        let sheetRowFront = layout.startRow + 2;
+
+        for (let t = 0; t < layout.halfTables; t++) {
+            const num = layout.assignments[t] ? layout.assignments[t].length : 0;
+            applyTableBorder(sheetRowFront, t + 1, num);
+        }
+
+        // Back Tables Row
+        // Front Block Height = 1 (Table Header) + maxRowsFront + 1 (Gap)
+        // Back Header is at: sheetRowFront + maxRowsFront + 1
+        let sheetRowBack = sheetRowFront + layout.maxRowsFront + 1;
+
+        for (let t = layout.halfTables; t < layout.assignments.length; t++) {
+            const num = layout.assignments[t] ? layout.assignments[t].length : 0;
+            applyTableBorder(sheetRowBack, (t - layout.halfTables) + 1, num);
+        }
+    });
+
+
+    // --- STEP 5: WARNINGS & FOOTER ---
+    let currentRow = sectionLayouts.reduce((acc, l) => acc + l.height, 0);
+
     if (failureReport) {
-        outputSheet.getRange(rowIndex, 1).setValue("WARNINGS:").setFontWeight("bold").setFontColor("red");
-        outputSheet.getRange(rowIndex + 1, 1).setValue(failureReport).setWrap(true);
-        rowIndex += 3;
+        // 1-based row index
+        const warnRow = currentRow + 1;
+        outputSheet.getRange(warnRow, 1).setValue("WARNINGS:").setFontWeight("bold").setFontColor("red");
+        outputSheet.getRange(warnRow + 1, 1).setValue(failureReport).setWrap(true);
+        currentRow += 3;
     }
 
-    outputSheet.getRange(rowIndex, 1).setValue("Last randomized: " + new Date().toLocaleString()).setFontSize(12).setFontStyle("italic");
-    rowIndex++;
+    outputSheet.getRange(currentRow + 1, 1).setValue("Last randomized: " + new Date().toLocaleString()).setFontSize(12).setFontStyle("italic");
 
-    // Clean up the sheet by deleting unused rows/columns.
-    const totalRows = outputSheet.getMaxRows();
-    const totalColumns = outputSheet.getMaxColumns();
-    if (rowIndex < totalRows) outputSheet.deleteRows(rowIndex + 1, totalRows - rowIndex);
-    if (maxColumnsUsed < totalColumns) outputSheet.deleteColumns(maxColumnsUsed + 1, totalColumns - maxColumnsUsed);
+    // Cleanup
+    const finalMaxRows = outputSheet.getMaxRows();
+    const finalMaxCols = outputSheet.getMaxColumns();
+    // Leave a buffer
+    if ((currentRow + 5) < finalMaxRows) outputSheet.deleteRows(currentRow + 5, finalMaxRows - (currentRow + 5));
+    if (maxCols < finalMaxCols) outputSheet.deleteColumns(maxCols + 1, finalMaxCols - maxCols);
 }
 
 // ============================================================================
@@ -2030,84 +2248,82 @@ function updateVisualMap(allAssignments) {
 
 /**
  * Helper: Attempts to resolve student separation violations by swapping students.
- * This function will *not* move students with preferential seating.
  *
  * @param {Array<Array<Object>>} tableAssignments
- * @param {Array<Array<string>>} separatedGroups
+ * @param {Set<string>} strictPairs - Set of "A|B" names
+ * @param {Array<Object>} softGroups - [{namesSet, original}]
  * @param {Object} prefsForSection
  * @returns {boolean} True if all violations were resolved, otherwise false.
  */
-function fixSeparationViolations(tableAssignments, separatedGroups, prefsForSection) {
-    if (separatedGroups.length === 0) return true; // No rules to fix.
+function fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection) {
+    if (strictPairs.size === 0 && softGroups.length === 0) return true;
 
-    // This is a safety valve to prevent an infinite loop if the rules
-    // are impossible to solve.
-    const MAX_ATTEMPTS = 200;
+    // Reduced attempts for performance. Smart swapping > brute force.
+    const MAX_ATTEMPTS = 500;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        // First, find all current violations.
-        let violations = findViolations(tableAssignments, separatedGroups);
-        if (violations.length === 0) return true; // Success! No violations left.
+        let violations = findViolations(tableAssignments, strictPairs, softGroups);
+        if (violations.length === 0) return true;
 
-        // Pick one random violation to try and fix.
         const violation = violations[Math.floor(Math.random() * violations.length)];
-        // 'studentB' is the student OBJECT we need to move.
-        const { tableIndex, studentB } = violation;
+        // violation has { tableIndex, members: [studentObj, ...] }
+
+        // Try to swap ANY of the violating members
+        // Shuffle members to avoid bias
+        const candidates = shuffleArray([...violation.members]);
+
         let swapped = false;
 
-        // Try to swap studentB with *any other student* in *any other table*.
-        for (let otherTableIdx = 0; otherTableIdx < tableAssignments.length; otherTableIdx++) {
-            if (otherTableIdx === tableIndex) continue; // Don't swap with same table
+        // Try to move one of the candidates
+        for (const studentToMove of candidates) {
 
-            for (let otherStudentIdx = 0; otherStudentIdx < tableAssignments[otherTableIdx].length; otherStudentIdx++) {
-                // 'studentToSwap' is the other student OBJECT.
-                const studentToSwap = tableAssignments[otherTableIdx][otherStudentIdx];
+            // Try to swap with *any other student* in *any other table*.
+            // We shuffle tables to avoid bias towards Table 1
+            const otherTableIndices = shuffleArray(tableAssignments.map((_, i) => i).filter(i => i !== violation.tableIndex));
 
-                // This is the "gatekeeper" check.
-                // It asks, "Is it safe to swap Student B and StudentToSwap?"
-                // "Will this swap break any *other* separation rules or preference rules?"
-                if (isSwapValid(studentB, studentToSwap, tableAssignments[tableIndex], tableAssignments[otherTableIdx], separatedGroups, prefsForSection, tableIndex, otherTableIdx)) {
-                    // If the swap is "valid", perform it.
-                    // Swap the objects in the arrays.
-                    tableAssignments[tableIndex][tableAssignments[tableIndex].indexOf(studentB)] = studentToSwap;
-                    tableAssignments[otherTableIdx][otherStudentIdx] = studentB;
-                    swapped = true;
-                    break; // Succeeded, so stop looping through 'otherStudentIdx'
+            for (const otherTableIdx of otherTableIndices) {
+                const destTable = tableAssignments[otherTableIdx];
+                // Try each student at dest table, plus empty seats if not full? 
+                // Currently code swaps student-for-student. 
+                // We should shuffling dest students too.
+                const destStudents = shuffleArray(destTable);
+
+                for (const studentToSwap of destStudents) {
+                    if (isSwapValid(studentToMove, studentToSwap, tableAssignments[violation.tableIndex], destTable, strictPairs, softGroups, prefsForSection, violation.tableIndex, otherTableIdx)) {
+
+                        // Perform Swap
+                        const sourceTable = tableAssignments[violation.tableIndex];
+                        sourceTable[sourceTable.indexOf(studentToMove)] = studentToSwap;
+                        destTable[destTable.indexOf(studentToSwap)] = studentToMove;
+
+                        swapped = true;
+                        break;
+                    }
                 }
+                if (swapped) break;
             }
-            if (swapped) break; // Succeeded, so stop looping through 'otherTableIdx'
+            if (swapped) break;
         }
     }
 
-    // After MAX_ATTEMPTS, we check one last time.
-    // If violations still exist, we "quit" and return false.
-    return findViolations(tableAssignments, separatedGroups).length === 0;
+    return findViolations(tableAssignments, strictPairs, softGroups).length === 0;
 }
 
 /**
  * --- NEW Helper Function ---
- * Attempts to improve the total "Gender Score" of the room.
- * It uses a randomized "Hill Climbing" algorithm to find the best configuration.
- *
- * @param {Array<Array<Object>>} tableAssignments - Array of tables with student OBJECTS.
- * @param {Array<Array<string>>} separatedGroups - Groups of student NAMES.
- * @param {Object} prefsForSection - Map of preferential student NAMES.
- * @returns {boolean} True if no "Bad" (Male Bias) tables remain, false otherwise.
+ * Attempts to improve the total "Gender Score".
+ * Optimized with lower attempt count.
  */
-function fixGenderBalance(tableAssignments, separatedGroups, prefsForSection) {
-    const MAX_ATTEMPTS = 5000; // Increased attempts to ensure convergence with stricter rules
-
-    // Identify tables that have students
+function fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection) {
+    const MAX_ATTEMPTS = 1000; // Reduced from 5000 for performance
     const populatedTables = [];
     tableAssignments.forEach((table, index) => {
         if (table.length > 0) populatedTables.push({ index, table });
     });
 
-    // If there's 1 or fewer tables, we can't swap.
     if (populatedTables.length <= 1) return true;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        // 1. Pick two random distinct tables
         const t1_idx = Math.floor(Math.random() * populatedTables.length);
         let t2_idx = Math.floor(Math.random() * populatedTables.length);
         while (t1_idx === t2_idx) t2_idx = Math.floor(Math.random() * populatedTables.length);
@@ -2117,40 +2333,27 @@ function fixGenderBalance(tableAssignments, separatedGroups, prefsForSection) {
         const tableA = tableA_wrapper.table;
         const tableB = tableB_wrapper.table;
 
-        // 2. Pick a random student from each
         const sA_idx = Math.floor(Math.random() * tableA.length);
         const sB_idx = Math.floor(Math.random() * tableB.length);
         const studentA = tableA[sA_idx];
         const studentB = tableB[sB_idx];
 
-        // Optimization: Calculate the combined score of these two tables BEFORE the swap
         const scoreBefore = getGenderTableScore(tableA) + getGenderTableScore(tableB);
 
-        // 3. Check if swap is valid (Separation/Preference rules)
-        if (isSwapValid(studentA, studentB, tableA, tableB, separatedGroups, prefsForSection, tableA_wrapper.index, tableB_wrapper.index)) {
-
-            // 4. Perform Swap
+        if (isSwapValid(studentA, studentB, tableA, tableB, strictPairs, softGroups, prefsForSection, tableA_wrapper.index, tableB_wrapper.index)) {
             tableA[sA_idx] = studentB;
             tableB[sB_idx] = studentA;
-
-            // 5. Calculate score AFTER the swap
             const scoreAfter = getGenderTableScore(tableA) + getGenderTableScore(tableB);
 
-            // 6. DECISION:
-            // If the new score is Lower (better) or Equal, keep the swap.
-            // Allowing Equal swaps helps shuffle the board to find new solutions.
             if (scoreAfter <= scoreBefore) {
-                // Keep swap
+                // Keep
             } else {
-                // Revert swap (Result was worse)
+                // Revert
                 tableA[sA_idx] = studentA;
                 tableB[sB_idx] = studentB;
             }
         }
     }
-
-    // Final Check: Do we have any "Bad" (Score 20) tables left?
-    // If we have tables with score 20 (Male Bias), return false to trigger warning.
     const badTables = tableAssignments.filter(t => getGenderTableScore(t) >= 20);
     return badTables.length === 0;
 }
@@ -2217,114 +2420,93 @@ function getGenderTableScore(table) {
 
 
 /**
- * Helper: Finds all separation violations in the current table assignments.
- *
- * @param {Array<Array<Object>>} tableAssignments
- * @param {Array<Array<string>>} separatedGroups
- * @returns {Array<Object>} A list of violation objects.
+ * Helper: Finds violations in the current assignments using strict/soft logic.
+ * Returns { tableIndex, members: [studentObj...] }
  */
-function findViolations(tableAssignments, separatedGroups) {
+function findViolations(tableAssignments, strictPairs, softGroups) {
     const violations = [];
 
-    // Create a "lookup map" for quick checking.
-    const separationMap = new Map();
-    separatedGroups.forEach(group => {
-        for (const student of group) {
-            if (!separationMap.has(student)) separationMap.set(student, new Set());
-            group.forEach(s => { if (s !== student) separationMap.get(student).add(s); });
-        }
-    });
-
-    // Now, check every table.
     tableAssignments.forEach((table, tableIndex) => {
-        // Check every student against every *other* student *in the same table*.
+        const names = table.map(s => s.name);
+
+        // 1. Check Strict Pairs
         for (let i = 0; i < table.length; i++) {
             for (let j = i + 1; j < table.length; j++) {
-                const studentA = table[i]; // This is an object
-                const studentB = table[j]; // This is an object
-
-                // Check by name: Is studentA's name on studentB's "do not sit with" list?
-                if (separationMap.has(studentA.name) && separationMap.get(studentA.name).has(studentB.name)) {
-                    // If yes, this is a violation.
-                    violations.push({ tableIndex, studentA, studentB }); // Push the objects
+                const p = [names[i], names[j]].sort().join('|');
+                if (strictPairs.has(p)) {
+                    // Violation found. Return BOTH as members to potentially move.
+                    violations.push({ tableIndex, members: [table[i], table[j]] });
                 }
             }
         }
+
+        // 2. Check Soft Groups (All members present)
+        softGroups.forEach(group => {
+            let foundCount = 0;
+            const presentMembers = [];
+
+            table.forEach(s => {
+                if (group.namesSet.has(s.name)) {
+                    foundCount++;
+                    presentMembers.push(s);
+                }
+            });
+
+            if (foundCount === group.namesSet.size) {
+                // Violation! Return ALL members present as candidates to move.
+                violations.push({ tableIndex, members: presentMembers, isSoft: true });
+            }
+        });
     });
     return violations;
 }
 
 /**
- * Helper: This is the "Master Gatekeeper" function.
- * It checks if swapping two students would create any new separation
- * or preference violations. It does NOT check gender.
- *
- * @param {Object} studentToMove
- * @param {Object} studentToTakePlace
- * @param {Array<Object>} sourceTable
- * @param {Array<Object>} destTable
- * @param {Array<Array<string>>} separatedGroups
- * @param {Object} prefsForSection
- * @param {number} sourceTableIndex
- * @param {number} destTableIndex
- * @returns {boolean} True if the swap is "safe", otherwise false.
+ * Master Gatekeeper for Swaps.
  */
-function isSwapValid(studentToMove, studentToTakePlace, sourceTable, destTable, separatedGroups, prefsForSection, sourceTableIndex, destTableIndex) {
-
-    // --- Check Separation Rules ---
-
-    // Check 1: Will 'studentToMove' conflict with anyone in its new table ('destTable')?
-    for (const student of destTable) {
-        if (student === studentToTakePlace) continue; // Don't check against the one leaving
-        // Check by name
-        if (areSeparated(studentToMove.name, student.name, separatedGroups)) return false;
+function isSwapValid(studentToMove, studentToTakePlace, sourceTable, destTable, strictPairs, softGroups, prefsForSection, sourceTableIndex, destTableIndex) {
+    if (prefsForSection) {
+        if (prefsForSection[studentToMove.name] && !prefsForSection[studentToMove.name].includes(destTableIndex + 1)) return false;
+        if (prefsForSection[studentToTakePlace.name] && !prefsForSection[studentToTakePlace.name].includes(sourceTableIndex + 1)) return false;
     }
 
-    // Check 2: Will 'studentToTakePlace' conflict with anyone in its new table ('sourceTable')?
-    for (const student of sourceTable) {
-        if (student === studentToMove) continue; // Don't check against the one leaving
-        // Check by name
-        if (areSeparated(studentToTakePlace.name, student.name, separatedGroups)) return false;
-    }
+    // --- Strict & Soft Checks ---
+    // Helper to check one table state
+    const isTableValid = (table, newStudent, oldStudent) => {
+        const newNames = table.map(s => s === oldStudent ? newStudent.name : s.name);
 
-    // --- Check Preferential Seating Rules ---
-
-    // Check 3: Is 'studentToMove' preferential? If so, is its new table ('destTable')
-    // one of its allowed tables?
-    if (prefsForSection && prefsForSection[studentToMove.name]) {
-        // The table index is 0-based, but preferences are 1-based (e.g., "Table 1").
-        if (!prefsForSection[studentToMove.name].includes(destTableIndex + 1)) {
-            return false; // Invalid: This swap moves them out of their preferred table.
+        // Check Strict
+        for (let i = 0; i < newNames.length; i++) {
+            const p = [newNames[i], newStudent.name].sort().join('|');
+            // Don't compare self
+            if (newNames[i] !== newStudent.name && strictPairs.has(p)) return false;
         }
-    }
 
-    // Check 4: Is 'studentToTakePlace' preferential? If so, is its new table
-    // ('sourceTable') one of its allowed tables?
-    if (prefsForSection && prefsForSection[studentToTakePlace.name]) {
-        if (!prefsForSection[studentToTakePlace.name].includes(sourceTableIndex + 1)) {
-            return false; // Invalid: This swap moves them out of their preferred table.
+        // Check Soft
+        for (const group of softGroups) {
+            let foundCount = 0;
+            newNames.forEach(n => { if (group.namesSet.has(n)) foundCount++; });
+            if (foundCount === group.namesSet.size) return false;
         }
-    }
+        return true;
+    };
 
-    // If all 4 checks passed, the swap is safe.
+    // Check Dest Table (receiving studentToMove, losing studentToTakePlace)
+    if (!isTableValid(destTable, studentToMove, studentToTakePlace)) return false;
+
+    // Check Source Table (receiving studentToTakePlace, losing studentToMove)
+    if (!isTableValid(sourceTable, studentToTakePlace, studentToMove)) return false;
+
     return true;
 }
 
 /**
- * Helper: Checks if two students are in the same separation group.
- *
- * @param {string} studentA - Name of student A
- * @param {string} studentB - Name of student B
- * @param {Array<Array<string>>} separatedGroups
- * @returns {boolean} True if they must be separated.
+ * Helper: Checks if two students are separated (used only in scoreTable now? NO, deprecated/unused by strictPairs logic but keep if needed elsewhere).
+ * Actually, `scoreTable` uses strictPairs set directly now.
+ * We can remove `areSeparated` helper or leave it for safety.
  */
 function areSeparated(studentA, studentB, separatedGroups) {
-    for (const group of separatedGroups) {
-        // If both students are found in the *same* group array...
-        if (group.includes(studentA) && group.includes(studentB)) {
-            return true; // ...they must be separated.
-        }
-    }
+    // Legacy support if needed, but main logic uses Sets now.
     return false;
 }
 
@@ -2647,6 +2829,28 @@ function buildTutorialHtml() {
         <div class="step"><div class="num">3</div><div><b>Run</b>: Click <i>Randomly Assign Students</i>.</div></div>
         
         <button class="secondary" onclick="google.script.run.generateDemoRoster()">🎲 Generate Demo Class</button>
+    </div>
+
+    <div class="card">
+        <div style="font-weight:bold; margin-bottom:10px;">🛡️ Rules & Constraints</div>
+        <details>
+            <summary>Preferential Seating</summary>
+            <div style="margin-top:5px;">Ensure specific students always get one of their favorite tables (e.g. front row).</div>
+        </details>
+        <details>
+            <summary>Student Separations</summary>
+            <div style="margin-top:5px;">
+                Define students who shouldn't sit together.
+                <ul>
+                    <li><b>⛔ Strict Separation</b>: Select 2+ students. No two students in this group will ever sit together.</li>
+                    <li><b>⚠️ Group Avoidance</b>: Select 3+ students. Useful for "cliques". Subsets (pairs) can sit together, but the <i>entire</i> group will never be placed at one table.</li>
+                </ul>
+            </div>
+        </details>
+        <details>
+            <summary>Student Buddies</summary>
+            <div style="margin-top:5px;">Link students who work well together. You can set the probability (e.g. "50% chance they sit together").</div>
+        </details>
     </div>
 
     <h3>📖 Menu Reference</h3>

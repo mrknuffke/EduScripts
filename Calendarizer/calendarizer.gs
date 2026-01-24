@@ -95,12 +95,138 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Calendar Tools')
     .addItem('ℹ️ Help & Tutorial', 'showTutorialSidebar')
+    .addItem('📄 Create Pacing Template', 'createPacingTemplate')
     .addItem('⚙️ Configuration', 'configureSettings')
     .addSeparator()
     .addItem('Create Wall Calendar View', 'createWallCalendar')
     .addItem('Create Lateral Calendar View', 'createLateralCalendar')
     .addToUi();
 }
+
+/**
+ * Creates a new Pacing Chart Template with intelligent formulas.
+ */
+function createPacingTemplate() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const date = new Date();
+  const currentYear = date.getFullYear();
+  const defaultName = `Draft ${currentYear}-${currentYear + 1}`;
+
+  const prompt = ui.prompt(
+    'Create Pacing Template',
+    `Enter a name for the new sheet (e.g., "${defaultName}"):`,
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (prompt.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+
+  const sheetName = prompt.getResponseText().trim();
+  if (!sheetName) {
+    ui.alert("Sheet name cannot be empty.");
+    return;
+  }
+
+  let sheet = ss.getSheetByName(sheetName);
+  if (sheet) {
+    const result = ui.alert(
+      'Sheet Already Exists',
+      `The sheet "${sheetName}" already exists.\n\nDo you want to delete it and create a new template? (This cannot be undone)`,
+      ui.ButtonSet.YES_NO
+    );
+
+    if (result === ui.Button.YES) {
+      ss.deleteSheet(sheet);
+    } else {
+      return;
+    }
+  }
+
+  sheet = ss.insertSheet(sheetName);
+
+  // 1. Set Headers
+  const headers = [
+    ["Class #", "Date 1", "Date 2", "Day", "Notes", "CLASS NAME 1", "HW/Notes", "CLASS NAME 2", "HW/Notes"]
+  ];
+  sheet.getRange("A1:I1").setValues(headers)
+    .setFontWeight("bold")
+    .setBackground("#0C343D") // Dark Teal
+    .setFontColor("white")
+    .setHorizontalAlignment("center");
+
+  // 2. Set Initial Row (Manual Start)
+  // We'll calculate a likely start date (e.g., closest Monday to Sept 1st)
+  // But for safety, just put a placeholder date.
+  const row2 = [
+    1,
+    new Date(currentYear, 8, 1), // Sept 1st
+    '=IF(TEXT(B2, "ddd") = "Fri", B2 + 3, IF(WEEKDAY(B2) = 7, B2 + 2, B2 + 1))', // Date 2 formula for row 2
+    "A/B",
+    "Start of Year"
+  ];
+
+  // 3. Set Daisy Chain Formulas (Row 3) - These are the ones users drag down
+  // Note: We use R1C1 notation or simple A1 relative references.
+  // B3 (Date 1): Look at C2 (Prev Date 2)
+  const formulaDate1 = '=IF(TEXT(C2, "ddd") = "Fri", C2 + 3, IF(WEEKDAY(C2) = 7, C2 + 2, C2 + 1))';
+
+  // C3 (Date 2): Look at B3 (Curr Date 1)
+  const formulaDate2 = '=IF(TEXT(B3, "ddd") = "Fri", B3 + 3, IF(WEEKDAY(B3) = 7, B3 + 2, B3 + 1))';
+
+  // D3 (Toggle): Look at D2
+  const formulaBlock = '=IF(OR(D2="A/B", D2="A", D2="B"), "C/D", IF(OR(D2="C/D", D2="C", D2="D"), "A/B", ""))';
+
+  // A3 (Class increment)
+  const formulaClass = '=A2+1';
+
+  const row3 = [
+    formulaClass,
+    formulaDate1,
+    formulaDate2,
+    formulaBlock,
+    "" // Notes empty
+  ];
+
+  // Write Row 2
+  sheet.getRange(2, 1, 1, 5).setValues([row2]);
+
+  // Write Row 3 and fill down
+  const rangeRow3 = sheet.getRange(3, 1, 1, 5);
+  rangeRow3.setValues([row3]);
+
+  // Fill down formulas for ~20 rows to get them started
+  rangeRow3.autoFill(sheet.getRange(3, 1, 20, 5), SpreadsheetApp.AutoFillSeries.DEFAULT_SERIES);
+
+  // 4. Formatting
+  sheet.setColumnWidths(1, 1, 60); // Class #
+  sheet.setColumnWidths(2, 2, 100); // Dates
+  sheet.setColumnWidths(4, 1, 80); // Day
+  sheet.setColumnWidths(5, 1, 200); // Notes
+  sheet.setColumnWidths(6, 4, 150); // Class columns
+
+  // Date formatting
+  sheet.getRange("B2:C100").setNumberFormat("ddd, d. m");
+
+  SpreadsheetApp.getUi().alert(`Created "${sheetName}" with template formulas.\n\nTry changing the start date in B2 to see the chain update!`);
+}
+
+// --- DATA PARSING LOGIC ---
+/**
+ * Helper function to convert month abbreviations to a month index (0-11).
+ */
+function getMonthIndex(monthAbbr) {
+  // ... rest of file calls from line 109 ...
+
+  // WE NEED TO SKIP TO THE TUTORIAL FUNCTION AT THE END TO UPDATE IT
+  // Since I can't skip content in a single replace block unless I include everything between,
+  // I will structure this edit to ONLY replace onOpen and ADD the new function right after it.
+  // Then I will do a SECOND edit for the tutorial HTML.
+  // WAITING - ACTUALLY I CAN DO IT ALL IF I AM CAREFUL OR I WILL JUST DO TWO EDITS.
+  // I WILL DO TWO EDITS TO BE SAFE. THIS TOOL CALL WILL JUST ADD THE FUNCTION AND UPDATE MENU.
+}
+
 
 // --- DATA PARSING LOGIC ---
 /**
@@ -777,14 +903,60 @@ function buildTutorialHtml() {
       .menu-item { margin-bottom: 8px; }
       .menu-name { font-weight: 600; color: #202124; }
       .menu-desc { font-size: 13px; color: #5f6368; margin-top: 2px; }
+      code { background: #eee; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+      .tip { background-color: #e8f0fe; border-left: 3px solid #1a73e8; padding: 8px; margin: 10px 0; font-size: 13px; }
     </style>
     
     <h3>🗓️ Calendarizer Guide</h3>
     <p>Visualize your pacing chart as a Wall Calendar or Lateral Calendar.</p>
 
+    <h3>⚡ How the Sheet Works</h3>
+    <div class="card">
+      <div style="font-weight:bold; margin-bottom:10px;">The "Daisy Chain" Logic</div>
+      <p style="margin-bottom:10px;">This sheet uses formulas to automatically calculate school days. Each cell depends on the one before it:</p>
+      
+      <div class="menu-item">
+        <div class="menu-name">1. Date 1 (Column B)</div>
+        <div class="menu-desc">
+           Looks at <b>Date 2</b> of the <i>previous row</i> and finds the next weekday (skips Sat/Sun).
+        </div>
+      </div>
+      
+       <div class="menu-item">
+        <div class="menu-name">2. Date 2 (Column C)</div>
+        <div class="menu-desc">
+           Looks at <b>Date 1</b> of the <i>current row</i> and finds the next weekday.
+        </div>
+      </div>
+      
+       <div class="menu-item">
+        <div class="menu-name">3. Block Type (Column D)</div>
+        <div class="menu-desc">
+           Automatically toggles between <b>A/B</b> and <b>C/D</b> based on the previous row.
+        </div>
+      </div>
+
+       <div class="tip">
+         <b>Why this matters:</b> If you change one date at the top, the rest of the year updates automatically!
+       </div>
+    </div>
+
+    <div class="card">
+       <div style="font-weight:bold; margin-bottom:10px;">🛑 When to Manual Override</div>
+       <p>The "Chain" works great until it hits a holiday or break. You must <b>manually type</b> over the formulas when:</p>
+       <ul style="padding-left: 20px; margin-top: 5px;">
+         <li><b>Start of Year/Semester:</b> Type the first date manually to start the chain.</li>
+         <li><b>Holidays/Breaks:</b> If a week is skipped, type the correct "Date 1" in the next row to jump the gap.</li>
+         <li><b>Resets:</b> If the A/B cycle needs to reset, type the new block letter manually in Column D.</li>
+       </ul>
+       <p style="margin-top:10px; font-style:italic; font-size:12px;">
+         <b>Note:</b> Once you manually type a date, you can drag the formulas from the cell <i>below</i> it back up to restart the automatic chain.
+       </p>
+    </div>
+
     <div class="card">
         <div style="font-weight:bold; margin-bottom:10px;">🚀 Quick Start</div>
-        <div class="step"><div class="num">1</div><div><b>Name Sheet</b>: Name your tab <code>YYYY-YYYY</code> (e.g., <code>2025-2026</code>).</div></div>
+        <div class="step"><div class="num">1</div><div><b>Template</b>: Use <b>Calendar Tools > Create Pacing Template</b> to get started.</div></div>
         <div class="step"><div class="num">2</div><div><b>Format</b>: Ensure columns match:
           <ul style="margin:5px 0 0 -20px;">
             <li><b>A</b>: Class Number</li>
@@ -805,6 +977,10 @@ function buildTutorialHtml() {
     <div class="menu-item">
         <div class="menu-name">Create Lateral Calendar View</div>
         <div class="menu-desc">Creates a compact linear view relative to the school year logic. Good for seeing the "flow" of the year.</div>
+    </div>
+    <div class="menu-item">
+        <div class="menu-name">📄 Create Pacing Template</div>
+        <div class="menu-desc">Creates a new sheet with smart formulas pre-filled for the current school year.</div>
     </div>
     <div class="menu-item">
         <div class="menu-name">⚙️ Configuration</div>
