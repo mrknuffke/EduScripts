@@ -1,16 +1,23 @@
 # Gradebook Reporter
 
-**Version**: 19.Jan.2026
+**Version**: 27.Jan.2026
 
 ## Overview
 Gradebook Reporter is a Google Apps Script utility that generates individual student progress reports from a spreadsheet gradebook. It can send these reports directly via email or compile them into a Google Doc for printing/archiving.
 
 ## Features
+-   **Flexible Reporting**: Automatically groups complex assessments (Quizzes, Labs, WebAssigns) based on structural clues (header keywords or standard rows), regardless of the Category name.
+-   **Participation Metrics**: Identifies and reports summary statistics (e.g., "% Incomplete", "Completion Rate") in a dedicated, color-coded table (Green = Good, Red/Orange = Needs Work).
+-   **Smart Layouts**:
+    -   **Chemistry Mode**: Separates Formative work from Summative Standard Mastery.
+    -   **AP Bio Mode**: Automatically detects "Topic Quest Labs" and other complex headers.
+-   **Missing Work Logic**: Intelligently suppresses "Congratulations" messages if summary stats indicate missing assignments, even if individual items aren't flagged.
+-   **Robust Handling**: Works on gradebooks with or without a "Standards" row, automatically falling back to simpler grouping methods.
 -   **Email Reports**: Sends personalized HTML emails to students with their grades and missing assignment alerts.
 -   **Drive Reports**: Generates a single Google Doc with page breaks between student reports.
 -   **Student Selector**: A UI dialog to filter students by section and select specific individuals.
--   **Demo Mode**: Generates a template gradebook to demonstrate functionality.
--   **Safety Checks**: identifying potential email/name mismatches before sending.
+-   **Preview Mode**: Preview up to 10 reports with clear separation to verify layout before sending.
+-   **Fun Feedback**: Includes a library of silly, encouraging emoji puns for students with no missing work.
 
 ## Installation
 1.  Open the Google Sheet where you wish to use the reporter.
@@ -29,11 +36,12 @@ Gradebook Reporter is a Google Apps Script utility that generates individual stu
 
 ## Setup
 -   Requires columns for "Name" and "Email".
--   Recognizes standard headers (Assignments, Standards, Categories).
+-   Recognizes standard headers.
+-   **Keywords**: Supports "Quiz", "Test", "Quest", "Lab", "WebAssign", "unit", "assess" for automatic grouping.
 -   Use `Gradebook Tools` > `Generate Demo Gradebook` to see the expected format.
 
 ## Usage
 1.  Open your gradebook sheet.
-2.  Go to `Gradebook Tools` > `Email Reports` or `Generate Reports (Drive)`.
+2.  Go to `Gradebook Tools` > `Email Reports` (or `Preview` / `Drive`).
 3.  Select students from the dialog.
 4.  Click "Run".

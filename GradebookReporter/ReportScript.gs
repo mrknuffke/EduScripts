@@ -227,7 +227,14 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
     "You are a productivity wizard. Teach me your ways.", "Your parents are probably going to frame this report.",
     "I tried to find a mistake. I failed. Good job.", "You are the MVP of turning things in on time.", "Your work ethic is legendary.",
     "Absolute perfection. No notes.", "You are winning at school right now.", "This is the gold standard of studenting.",
-    "You are a homework ninja. Silent, deadly, effective.", "Boom. Done. Everything submitted.", "You are officially on top of your game."
+    "You are a homework ninja. Silent, deadly, effective.", "Boom. Done. Everything submitted.", "You are officially on top of your game.",
+    "You're 🍇 (grape) at this! Keep it up!", "Don't stop be-🍃-ing (believing) in yourself!", "You are 🦖-mite (dynamite)!",
+    "Keep up the 🥚-cellent work!", "You really 🐮-ved (moved) mountains with this effort!", "You're kind of a big 🥒 (dill)!",
+    "Lettuce 🥬 celebrate your success!", "You've got a lot of 🍕-zazz (pizzazz)!", "I'm 🍌 (bananas) about your work ethic!",
+    "You are one smart 🍪 (cookie)!", "Gouda job! 🧀 (Cheesy, I know)", "You are s-🧊 (ice) cool with no missing work!",
+    "You rose 🌹 to the occasion!", "You are ⚓️ (anchor)-ed in excellence!", "Sending you high-fives and 🌮 (tacos)!",
+    "Orange 🍊 you glad you did all your work?", "You are pear-fect 🍐!", "Time to shell-ebrate! 🐢",
+    "You are un-be-🍃-able!", "You are a fungal/fungi to have in class! 🍄", "I Dig ⛏️ your work ethic!"
   ];
 
   let summativeStartColIndex = -1;
@@ -240,7 +247,13 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
   }
 
   const headers = data[headerRowIndex];
-  const categories = data[categoryRowIndex];
+  // Fill-right Categories for merged headers
+  const categories = data[categoryRowIndex] ? [...data[categoryRowIndex]] : [];
+  for (let i = 1; i < categories.length; i++) {
+    if (categories[i] === "" && categories[i - 1] !== "") {
+      categories[i] = categories[i - 1];
+    }
+  }
   let emailColIndex = -1;
 
   for (let i = 0; i < headers.length; i++) { if (headers[i] && headers[i].toLowerCase().includes('email')) { emailColIndex = i; break; } }
@@ -252,7 +265,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
     if (headerBgColors[i] === '#000000') { cutoffColIndex = i; break; }
   }
 
-  const standards = data[standardsRowIndex];
+  const standards = (data.length > standardsRowIndex) ? data[standardsRowIndex] : [];
   const headerFontColors = fontColors[headerRowIndex];
 
   const columnDefs = headers.map((header, i) => {
@@ -266,7 +279,10 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       fontColor: headerFontColors[i],
       finalName: header,
       finalCategory: "",
-      isSummativeStandard: false
+      finalCategory: "",
+      isSummativeStandard: false,
+      isQuizOrWebAssign: false,
+      isSummaryStat: false
     };
   });
 
@@ -295,6 +311,37 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       col.finalName = col.finalCategory;
     } else {
       col.finalName = currentHeader;
+    }
+
+    // --- NEW: FLEXIBLE GROUPED ASSESSMENT & SUMMARY DETECTION ---
+    const lowerHeader = col.rawHeader ? col.rawHeader.toLowerCase().trim() : "";
+    const lowerStandard = col.standard ? col.standard.toLowerCase().trim() : "";
+    const lowerCategory = col.finalCategory ? col.finalCategory.toLowerCase().trim() : "";
+
+    // Heuristics
+    const assessmentKeywords = ['quiz', 'test', 'exam', 'assess', 'wa', 'webassign', 'unit', 'quest', 'lab'];
+    const headerScoreKeywords = ['raw', 'score', 'percent', '%', 'letter', 'grade', 'points', 'pts'];
+    const summaryKeywords = ['completion', 'missing', 'participation', 'rate'];
+
+    const matchesAssessment = assessmentKeywords.some(k => lowerStandard.includes(k) || lowerCategory.includes(k));
+    const matchesScoreHeader = headerScoreKeywords.some(k => lowerHeader.includes(k));
+
+    // Logic: It's a grouped assessment if Row 3 OR Category has a keyword OR (Row 3 exists/is used AND Row 2 looks like a score header)
+    if (matchesAssessment || (lowerStandard !== "" && matchesScoreHeader)) {
+      col.isQuizOrWebAssign = true;
+      // If a specific name exists in the Standards row (row 3), preserve it as the category for grouping
+      // BUT ONLY if it isn't empty and doesn't look like a Chemistry Standard ID (DCI, SEP, AC, etc)
+      if (col.standard && col.standard.trim() !== "") {
+        const std = col.standard.trim();
+        const isChemStandard = /^(DCI|SEP|AC|CC)\./i.test(std);
+        if (!isChemStandard) col.finalCategory = std;
+      }
+      if (currentHeader !== "") col.finalName = currentHeader;
+    }
+
+    // Checking for Summary Stats
+    if (summaryKeywords.some(k => lowerHeader.includes(k))) {
+      col.isSummaryStat = true;
     }
   });
 
@@ -334,13 +381,15 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       let value = row[idx];
       let displayValue = value;
       let isIssue = false;
+      let isExempt = false;
 
       if (value) {
         const valStr = String(value).trim();
         const lowerVal = valStr.toLowerCase();
-        if (lowerVal === 'true' || valStr === '1') displayValue = 'Complete';
-        else if (valStr === '0' || lowerVal === 'm') { displayValue = 'Missing'; isIssue = true; }
-        else if (lowerVal === 'ex') displayValue = 'Exempt';
+
+        if ((lowerVal === 'true' || valStr === '1') && !col.isSummaryStat) displayValue = 'Complete';
+        else if ((valStr === '0' || lowerVal === 'm') && !col.isSummaryStat) { displayValue = 'Missing'; isIssue = true; }
+        else if (lowerVal === 'ex') { displayValue = 'Exempt'; isExempt = true; }
         else if (lowerVal === 'i') { displayValue = 'Incomplete'; isIssue = true; }
 
         if (subjectName === "AP Biology") {
@@ -355,8 +404,10 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       }
 
       let shouldReport = false;
-      if (isIssue) shouldReport = true;
+      if (isIssue || isExempt) shouldReport = true;
       if (subjectName === "Chemistry" && col.isSummativeStandard) shouldReport = true;
+      if (col.isQuizOrWebAssign && displayValue !== "-") shouldReport = true;
+      if (col.isSummaryStat) shouldReport = true;
 
       if (shouldReport) {
         reportRows.push({
@@ -367,31 +418,44 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
           bgColor: col.bgColor,
           fontColor: col.fontColor,
           rowBg: rowBgColors[idx],
-          rowFont: rowFontColors[idx]
+          rowFont: rowFontColors[idx],
+          isQuizOrWebAssign: col.isQuizOrWebAssign,
+          isSummaryStat: col.isSummaryStat,
+          isSummativeStandard: col.isSummativeStandard
         });
       }
     });
 
     const hasActualMissingWork = reportRows.some(item =>
-      item.value === 'Missing' ||
-      item.value === 'Incomplete' || (subjectName === "AP Biology" && item.name.toLowerCase().startsWith("lab") && parseFloat(item.value) < 4)
+      !item.isQuizOrWebAssign && !item.isSummaryStat && (
+        item.value === 'Missing' ||
+        item.value === 'Incomplete' || (subjectName === "AP Biology" && item.name.toLowerCase().startsWith("lab") && parseFloat(item.value) < 4)
+      )
     );
+
+    const hasSummaryIssue = reportRows.some(item =>
+      item.isSummaryStat &&
+      (item.name.toLowerCase().includes("missing") || item.name.toLowerCase().includes("incomplete")) &&
+      parseFloat(String(item.value).replace('%', '')) > 0
+    );
+
+    const isStudentInTrouble = hasActualMissingWork || hasSummaryIssue;
 
     // --- ACTION HANDLERS ---
 
     if (mode === 'drive') {
       if (processedCount > 0) docBody.appendPageBreak();
-      renderToDoc(docBody, titlePrefix, studentName, reportRows, hasActualMissingWork, subjectName, coolMessages);
+      renderToDoc(docBody, titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages);
       processedCount++;
       if (processedCount % 5 === 0) { doc.saveAndClose(); doc = DocumentApp.openById(docId); docBody = doc.getBody(); }
     }
 
     else if (mode === 'preview') {
-      if (previewCount >= 3) continue;
+      if (previewCount >= 10) continue;
       const studentEmail = (emailColIndex > -1) ? row[emailColIndex] : "No Email";
-      const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, hasActualMissingWork, subjectName, coolMessages);
+      const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages);
 
-      previewHtml += `<div class="preview-box">
+      previewHtml += `<div class="preview-box" style="margin-bottom: 40px; border-bottom: 4px solid #ccc; padding-bottom: 40px;">
                         <div class="preview-header">PREVIEW ${previewCount + 1}: ${studentName} (${studentEmail})</div>
                         ${htmlBody}
                       </div>`;
@@ -401,7 +465,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
     else if (mode === 'email') {
       const studentEmail = (emailColIndex > -1) ? row[emailColIndex] : "";
       if (studentEmail && studentEmail.includes('@')) {
-        const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, hasActualMissingWork, subjectName, coolMessages);
+        const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages);
         try {
           MailApp.sendEmail({
             to: studentEmail,
@@ -451,22 +515,85 @@ function renderToDoc(body, title, studentName, rows, hasMissing, subjectName, me
     const msg = messages[Math.floor(Math.random() * messages.length)];
     const pMsg = body.appendParagraph(`\n\n${msg}`);
     pMsg.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setFontSize(14).setForegroundColor('#2E7D32');
-    const pSub = body.appendParagraph("\nStatus: No missing assignments. Nothing is owed at this time.");
+    const pSub = body.appendParagraph("\nStatus: No missing formative work. Nothing is owed at this time.");
     pSub.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setFontSize(10).setForegroundColor('#555555');
 
-    if (subjectName === "Chemistry" && rows.length > 0) {
-      body.appendParagraph("\nSummative Standard Mastery:\n");
-      printGroupedTableDoc(body, rows);
+    // Stats for perfect students
+    printSummaryStatsDoc(body, rows);
+
+    if (rows.length > 0) {
+      const filteredRows = rows.filter(r => !r.isSummaryStat);
+
+      if (subjectName === "Chemistry") {
+        const summativeRows = filteredRows.filter(r => r.isSummativeStandard);
+        const otherRows = filteredRows.filter(r => !r.isSummativeStandard);
+
+        if (otherRows.length > 0) printGroupedTableDoc(body, otherRows);
+        if (summativeRows.length > 0) {
+          body.appendParagraph("\nSummative Standard Mastery:\n").setBold(true).setFontSize(12);
+          printGroupedTableDoc(body, summativeRows);
+        }
+      } else {
+        if (filteredRows.length > 0) printGroupedTableDoc(body, filteredRows);
+      }
     }
   } else {
-    printGroupedTableDoc(body, rows);
+    // Has Missing Work
+    const filteredRows = rows.filter(r => !r.isSummaryStat);
+    if (subjectName === "Chemistry") {
+      const summativeRows = filteredRows.filter(r => r.isSummativeStandard);
+      const otherRows = filteredRows.filter(r => !r.isSummativeStandard);
+
+      if (otherRows.length > 0) printGroupedTableDoc(body, otherRows);
+      if (summativeRows.length > 0) {
+        body.appendParagraph("\nSummative Standard Mastery:\n").setBold(true).setFontSize(12);
+        printGroupedTableDoc(body, summativeRows);
+      }
+    } else {
+      printGroupedTableDoc(body, filteredRows);
+    }
+    // Stats for other students
+    printSummaryStatsDoc(body, rows);
   }
+}
+
+function printSummaryStatsDoc(body, rows) {
+  const stats = rows.filter(r => r.isSummaryStat);
+  if (stats.length === 0) return;
+
+  body.appendParagraph("\nParticipation Metrics").setBold(true).setFontSize(11).setForegroundColor('#444444');
+  const table = body.appendTable();
+  table.setBorderColor('#bbbbbb');
+
+  // Doc table widths are tricky, we just rely on auto for now or set specifically if needed
+  stats.forEach(item => {
+    const tr = table.appendTableRow();
+    tr.appendTableCell(item.name).setBackgroundColor('#f9f9f9').setFontSize(9).setBold(true).setWidth(230);
+    const valCell = tr.appendTableCell(item.value);
+    const para = valCell.getChild(0).asParagraph().setAlignment(DocumentApp.HorizontalAlignment.CENTER).setFontSize(9);
+
+    // Color Logic
+    const nameLower = item.name.toLowerCase();
+    const valNum = parseFloat(String(item.value).replace('%', ''));
+    if (!isNaN(valNum)) {
+      if (nameLower.includes("incomplete") || nameLower.includes("missing")) {
+        // Lower is better. 0 is best.
+        if (valNum === 0) para.setForegroundColor('#2E7D32'); // Green
+        else if (valNum > 0) para.setForegroundColor('#c62828'); // Red
+      } else if (nameLower.includes("completion")) {
+        // Higher is better.
+        if (valNum === 100 || valNum === 1) para.setForegroundColor('#2E7D32');
+        else if (valNum < 100) para.setForegroundColor('#ef6c00'); // Orange
+      }
+    }
+  });
 }
 
 function printGroupedTableDoc(body, rows) {
   const groups = {};
   const order = [];
   rows.forEach(r => {
+    if (r.isSummaryStat) return; // Skip stats
     const c = r.category || "General";
     if (!groups[c]) { groups[c] = []; order.push(c); }
     groups[c].push(r);
@@ -478,7 +605,9 @@ function printGroupedTableDoc(body, rows) {
     table.setBorderColor('#bbbbbb');
     const header = table.appendTableRow();
     header.appendTableCell("Assignment").setBackgroundColor('#EFEFEF').setBold(true).setFontSize(9).setWidth(230);
-    header.appendTableCell("Score").setBackgroundColor('#EFEFEF').setBold(true).setFontSize(9);
+    const scoreHeader = header.appendTableCell("Score");
+    scoreHeader.setBackgroundColor('#EFEFEF').setBold(true).setFontSize(9);
+    scoreHeader.getChild(0).asParagraph().setAlignment(DocumentApp.HorizontalAlignment.CENTER);
 
     groups[cat].forEach(item => {
       const tr = table.appendTableRow();
@@ -488,7 +617,7 @@ function printGroupedTableDoc(body, rows) {
       c1.setPaddingTop(2).setPaddingBottom(2);
       const c2 = tr.appendTableCell(item.value);
       c2.setBackgroundColor(item.rowBg !== '#ffffff' ? item.rowBg : '#ffffff');
-      c2.getChild(0).asParagraph().setFontSize(9).setForegroundColor(item.rowFont);
+      c2.getChild(0).asParagraph().setFontSize(9).setForegroundColor(item.rowFont).setAlignment(DocumentApp.HorizontalAlignment.CENTER);
       c2.setPaddingTop(2).setPaddingBottom(2);
     });
   });
@@ -503,17 +632,62 @@ function generateHtmlReport(title, studentName, rows, hasMissing, subjectName, m
     const msg = messages[Math.floor(Math.random() * messages.length)];
     html += `<div style="text-align: center; margin: 20px 0; padding: 15px; background-color: #e8f5e9; border-radius: 5px;">`;
     html += `<h3 style="color: #2E7D32; margin: 0;">${msg}</h3>`;
-    html += `<p style="color: #555; font-size: 12px; margin-top: 5px;">Status: No missing assignments. Nothing is owed at this time.</p></div>`;
-
-    if (subjectName === "Chemistry" && rows.length > 0) {
-      html += `<h4 style="margin-top: 20px;">Summative Standard Mastery:</h4>`;
-      html += generateHtmlTables(rows);
-    }
-  } else {
-    html += generateHtmlTables(rows);
+    html += `<p style="color: #555; font-size: 12px; margin-top: 5px;">Status: No missing formative work. Nothing is owed at this time.</p></div>`;
   }
+
+  html += generateHtmlSummaryStats(rows);
+
+  if (rows.length > 0) {
+    const filteredRows = rows.filter(r => !r.isSummaryStat);
+
+    if (subjectName === "Chemistry") {
+      const summativeRows = filteredRows.filter(r => r.isSummativeStandard);
+      const otherRows = filteredRows.filter(r => !r.isSummativeStandard);
+
+      if (otherRows.length > 0) html += generateHtmlTables(otherRows);
+      if (summativeRows.length > 0) {
+        html += `<h4 style="margin-top: 20px;">Summative Standard Mastery:</h4>`;
+        html += generateHtmlTables(summativeRows);
+      }
+    } else {
+      html += generateHtmlTables(filteredRows);
+    }
+  }
+
   html += `<p style="font-size: 10px; color: #888; text-align: center; margin-top: 30px;">Generated by Gradebook Tools</p>`;
   html += `</div>`;
+  return html;
+}
+
+function generateHtmlSummaryStats(rows) {
+  const stats = rows.filter(r => r.isSummaryStat);
+  if (stats.length === 0) return "";
+
+  let html = `<h4 style="margin-bottom: 5px; color: #444; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 20px;">Participation Metrics</h4>`;
+  html += `<table style="width: 100%; max-width: 400px; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">`;
+  stats.forEach(item => {
+    let colorStyle = "";
+    const nameLower = item.name.toLowerCase();
+    const valNum = parseFloat(String(item.value).replace('%', ''));
+
+    if (!isNaN(valNum)) {
+      if (nameLower.includes("incomplete") || nameLower.includes("missing")) {
+        // Lower is better. 0 is best.
+        if (valNum === 0) colorStyle = "color: #2E7D32; font-weight: bold;"; // Green
+        else if (valNum > 0) colorStyle = "color: #c62828; font-weight: bold;"; // Red
+      } else if (nameLower.includes("completion")) {
+        // Higher is better.
+        if (valNum === 100 || valNum === 1) colorStyle = "color: #2E7D32; font-weight: bold;";
+        else if (valNum < 100) colorStyle = "color: #ef6c00; font-weight: bold;"; // Orange
+      }
+    }
+
+    html += `<tr>
+              <td style="padding: 5px; border: 1px solid #eee; background-color: #f9f9f9; width: 70%; font-weight: bold;">${item.name}</td>
+              <td style="padding: 5px; border: 1px solid #eee; text-align: center; ${colorStyle}">${item.value}</td>
+             </tr>`;
+  });
+  html += `</table>`;
   return html;
 }
 
@@ -521,6 +695,7 @@ function generateHtmlTables(rows) {
   const groups = {};
   const order = [];
   rows.forEach(r => {
+    if (r.isSummaryStat) return;
     const c = r.category || "General";
     if (!groups[c]) { groups[c] = []; order.push(c); }
     groups[c].push(r);
@@ -531,8 +706,8 @@ function generateHtmlTables(rows) {
     html += `<h4 style="margin-bottom: 5px; color: #444; border-bottom: 1px solid #ccc; padding-bottom: 3px;">${cat}</h4>`;
     html += `<table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;">`;
     html += `<tr style="background-color: #EFEFEF;">
-              <th style="text-align: left; padding: 5px; border: 1px solid #ccc;">Assignment</th>
-              <th style="text-align: left; padding: 5px; border: 1px solid #ccc;">Score</th>
+              <th style="text-align: left; padding: 5px; border: 1px solid #ccc; width: 75%;">Assignment</th>
+              <th style="text-align: center; padding: 5px; border: 1px solid #ccc; width: 25%;">Score</th>
              </tr>`;
     groups[cat].forEach(item => {
       const bgStyle = item.bgColor !== '#ffffff' ? `background-color: ${item.bgColor};` : '';
@@ -541,7 +716,7 @@ function generateHtmlTables(rows) {
       const rowFontStyle = `color: ${item.rowFont};`;
       html += `<tr>
                 <td style="padding: 5px; border: 1px solid #ccc; ${bgStyle} ${fontStyle}">${item.name}</td>
-                <td style="padding: 5px; border: 1px solid #ccc; ${rowBgStyle} ${rowFontStyle}">${item.value}</td>
+                <td style="text-align: center; padding: 5px; border: 1px solid #ccc; ${rowBgStyle} ${rowFontStyle}">${item.value}</td>
                </tr>`;
     });
     html += `</table>`;
