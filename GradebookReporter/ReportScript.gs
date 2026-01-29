@@ -29,6 +29,19 @@
  * 3. Process.
  */
 
+/**
+ * Expands shorthand prefixes in assignment names for display.
+ * @param {string} name - The assignment name to expand
+ * @return {string} The expanded name
+ */
+function expandAssignmentPrefix(name) {
+  if (!name) return name;
+  // Case-insensitive prefix expansion
+  return name
+    .replace(/^AC:/i, 'Activity:')
+    .replace(/^ID:/i, 'InfoDoc:');
+}
+
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Gradebook Tools')
@@ -37,8 +50,47 @@ function onOpen() {
     .addItem('📧 Email Reports (Selector)', 'openEmailSelector')
     .addItem('📂 Generate Reports (Drive)', 'openDriveSelector')
     .addSeparator()
+    .addItem('⚙️ Set Reply-To Email', 'setReplyToEmail')
     .addItem('📘 Generate Demo Gradebook', 'generateGradebookTemplate')
     .addToUi();
+}
+
+/**
+ * Gets the stored reply-to email for this spreadsheet.
+ * @return {string} The reply-to email or empty string if not set
+ */
+function getReplyToEmail() {
+  const props = PropertiesService.getDocumentProperties();
+  return props.getProperty('REPLY_TO_EMAIL') || '';
+}
+
+/**
+ * Prompts the user to set/update the reply-to email address.
+ */
+function setReplyToEmail() {
+  const ui = SpreadsheetApp.getUi();
+  const currentEmail = getReplyToEmail();
+
+  const promptMessage = currentEmail
+    ? `Current reply-to email: ${currentEmail}\n\nEnter a new email address (or leave blank to clear):`
+    : 'Enter the email address that students should reply to:';
+
+  const response = ui.prompt('Set Reply-To Email', promptMessage, ui.ButtonSet.OK_CANCEL);
+
+  if (response.getSelectedButton() === ui.Button.OK) {
+    const newEmail = response.getResponseText().trim();
+    const props = PropertiesService.getDocumentProperties();
+
+    if (newEmail === '') {
+      props.deleteProperty('REPLY_TO_EMAIL');
+      ui.alert('Reply-to email has been cleared. Emails will be sent without a reply-to address.');
+    } else if (newEmail.includes('@')) {
+      props.setProperty('REPLY_TO_EMAIL', newEmail);
+      ui.alert(`Reply-to email set to: ${newEmail}`);
+    } else {
+      ui.alert('Invalid email address. Please include an @ symbol.');
+    }
+  }
 }
 
 function openEmailSelector() { showStudentSelector('email'); }
@@ -217,6 +269,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
   const nameColIndex = 1;
 
   const coolMessages = [
+    // Original fun puns
     "🐳 done! You're doing swimmingly! 🌊", "You are the 🐝's 🦵s! (The bee's knees!) 🍯", "You 🍩 have any missing work! Sweet! 🍩",
     "🌮 'bout a great job! You crushed it! 🌮", "You are 👻-tacular! (No missing work to haunt you!)", "I'm not 🦁, you did a great job! 🦁",
     "You are on 🔥! (Metaphorically, please don't pull the alarm) 🚒", "You're a 🌟! Don't let anyone dim your shine.",
@@ -234,7 +287,32 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
     "You are one smart 🍪 (cookie)!", "Gouda job! 🧀 (Cheesy, I know)", "You are s-🧊 (ice) cool with no missing work!",
     "You rose 🌹 to the occasion!", "You are ⚓️ (anchor)-ed in excellence!", "Sending you high-fives and 🌮 (tacos)!",
     "Orange 🍊 you glad you did all your work?", "You are pear-fect 🍐!", "Time to shell-ebrate! 🐢",
-    "You are un-be-🍃-able!", "You are a fungal/fungi to have in class! 🍄", "I Dig ⛏️ your work ethic!"
+    "You are un-be-🍃-able!", "You are a fungal/fungi to have in class! 🍄", "I Dig ⛏️ your work ethic!",
+    // Chemistry puns
+    "You've got great chemistry with your assignments! ⚗️", "NaCl job! (That's a salt, but you're not basic!) 🧂",
+    "You have all the right elements for success! 🔬", "Your work is Au-some! (That's gold!) 🥇",
+    "You're in your element! Periodic table would be proud. 📊", "No missing work? That's a positive reaction! ⚛️",
+    "You've bonded well with your responsibilities! 🔗", "Your grade is noble... like a noble gas! 💨",
+    "All your work is accounted for - perfectly balanced, as all equations should be! ⚖️",
+    "You're sodium funny... Na just kidding, you're brilliant! 🧪",
+    // Biology puns
+    "You've really evolved as a student! 🧬", "Cell-ebrate good times! All work complete! 🦠",
+    "You're DNA-mite! (Get it? Dynamite?) 💥", "Mitosis be the best report I've seen today! 🔬",
+    "You've got good genes... for turning in work! 👖🧬", "This is un-CELL-ievably good work! 🔬",
+    "You're not just surviving, you're thriving! Natural selection approves! 🌿",
+    "ATP-solutely amazing work! You've got energy! ⚡", "Your work ethic is phenotypically perfect! 🧬",
+    "Organism-ized and on point! 🦎", "You've adapted well to the assignment environment! 🐸",
+    // Physics puns
+    "You have great potential (energy)! ⚡", "Your momentum is unstoppable! 🚀",
+    "Newton would be proud - you stayed in motion! 🍎", "You've overcome all resistance! Ohm my! ⚡",
+    "Your work is relatively excellent! Einstein approves! 🧠", "You're accelerating toward success! 📈",
+    "Zero friction between you and your assignments! 🛷", "You've reached terminal velocity of awesomeness! 🪂",
+    "Watt a great job! You're fully charged! 🔋", "Your grades are looking pretty stellar! ⭐",
+    // General science puns
+    "Scientifically speaking, you're crushing it! 🔬", "Hypothesis confirmed: You're awesome! 📋",
+    "Your data supports the conclusion that you rock! 📊", "Lab-solutely fantastic work! 🥽",
+    "You've completed all your trials successfully! 🧫", "Your results are reproducible: consistently great! 📈",
+    "Control group? More like you're IN control! 🎮", "You've got the right formula for success! 📝"
   ];
 
   let summativeStartColIndex = -1;
@@ -388,7 +466,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
         const lowerVal = valStr.toLowerCase();
 
         if ((lowerVal === 'true' || valStr === '1') && !col.isSummaryStat) displayValue = 'Complete';
-        else if ((valStr === '0' || lowerVal === 'm') && !col.isSummaryStat) { displayValue = 'Missing'; isIssue = true; }
+        else if ((valStr === '0' || lowerVal === 'm' || lowerVal === 'false') && !col.isSummaryStat) { displayValue = 'Missing'; isIssue = true; }
         else if (lowerVal === 'ex') { displayValue = 'Exempt'; isExempt = true; }
         else if (lowerVal === 'i') { displayValue = 'Incomplete'; isIssue = true; }
 
@@ -412,7 +490,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       if (shouldReport) {
         reportRows.push({
           category: col.finalCategory,
-          name: col.finalName,
+          name: expandAssignmentPrefix(col.finalName),
           value: displayValue,
           note: rowNotes[idx],
           bgColor: col.bgColor,
@@ -467,12 +545,14 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       if (studentEmail && studentEmail.includes('@')) {
         const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages);
         try {
-          MailApp.sendEmail({
+          const emailOptions = {
             to: studentEmail,
-            replyTo: 'dknuffke@sas.edu.sg',
             subject: `${titlePrefix} - ${studentName}`,
             htmlBody: htmlBody
-          });
+          };
+          const replyTo = getReplyToEmail();
+          if (replyTo) emailOptions.replyTo = replyTo;
+          MailApp.sendEmail(emailOptions);
           processedCount++;
         } catch (e) { Logger.log(`Email error ${studentName}: ${e.message}`); }
       }
