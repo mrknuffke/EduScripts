@@ -464,11 +464,17 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       if (value) {
         const valStr = String(value).trim();
         const lowerVal = valStr.toLowerCase();
+        const rawHeaderLower = col.rawHeader ? col.rawHeader.toLowerCase() : "";
 
         if ((lowerVal === 'true' || valStr === '1') && !col.isSummaryStat) displayValue = 'Complete';
         else if ((valStr === '0' || lowerVal === 'm' || lowerVal === 'false') && !col.isSummaryStat) { displayValue = 'Missing'; isIssue = true; }
         else if (lowerVal === 'ex') { displayValue = 'Exempt'; isExempt = true; }
         else if (lowerVal === 'i') { displayValue = 'Incomplete'; isIssue = true; }
+        // Treat 0.5 or .5 as Incomplete for Activities (AC:) and InfoDocs (ID:)
+        else if ((valStr === '0.5' || valStr === '.5') && !col.isSummaryStat) {
+          const isActivityOrInfoDoc = rawHeaderLower.startsWith('ac:') || rawHeaderLower.startsWith('id:');
+          if (isActivityOrInfoDoc) { displayValue = 'Incomplete'; isIssue = true; }
+        }
 
         if (subjectName === "AP Biology") {
           const nameCheck = col.finalName.toLowerCase().trim();
