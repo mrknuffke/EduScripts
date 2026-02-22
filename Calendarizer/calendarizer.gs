@@ -393,6 +393,9 @@ function buildWallCalendarRichText(dayData, dayNumber, dayOfWeekStr) {
     });
   }
 
+  // Add an empty line at the end so clicking the cell places the cursor on a new line
+  textParts.push('\n');
+
   return createRichText(textParts, boldSegments);
 }
 
@@ -428,6 +431,9 @@ function buildLateralCalendarRichText(dayData, dayOfWeekStr) {
       currentLength += noteText.length;
     });
   }
+
+  // Add an empty line at the end so clicking the cell places the cursor on a new line
+  textParts.push('\n');
 
   return createRichText(textParts, boldSegments);
 }
