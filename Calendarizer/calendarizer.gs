@@ -42,7 +42,8 @@ const DEFAULT_CONFIG = {
     borderColor: '#dadce0', // Subtle Google Grey
     header: { background: '#f1f3f4', fontColor: '#5f6368' },
     day: { weekday: '#ffffff' },
-    emptyDay: { background: '#f8f9fa' },
+    weekend: { background: '#5f6368', fontColor: '#ffffff' }, // Darker grey with white text
+    emptyDay: { background: '#5f6368' },
 
     // Modern Pastel Palette (Month 1 -> Month 12)
     // High contrast pairs: Light background, Darker font accent
@@ -473,6 +474,7 @@ function drawMonth(sheet, year, month, startRow, eventData, monthCounter, config
 
   const gridStartRow = startRow + 2;
   const backgroundColors = [];
+  const fontColors = [];
   const richTextGrid = []; // 2D array for batched writing
 
   let currentDay = 1;
@@ -482,6 +484,7 @@ function drawMonth(sheet, year, month, startRow, eventData, monthCounter, config
   for (let week = 0; week < 6; week++) {
     const currentRow = gridStartRow + week;
     const rowBackgrounds = [];
+    const rowFontColors = [];
     const rowRichTexts = [];
 
     sheet.setRowHeight(currentRow, 120);
@@ -492,14 +495,17 @@ function drawMonth(sheet, year, month, startRow, eventData, monthCounter, config
 
       if (!isDayCell) {
         rowBackgrounds.push(config.styles.emptyDay.background);
+        rowFontColors.push('#000000');
         rowRichTexts.push(SpreadsheetApp.newRichTextValue().setText('').build());
       } else {
         // Background Logic
         // Use a subtle alternative color for weekends if desired, else check config
         if (day === 0 || day === 6) {
-          rowBackgrounds.push(config.styles.emptyDay.background); // Using empty color for weekends for subtle texture
+          rowBackgrounds.push(config.styles.weekend ? config.styles.weekend.background : config.styles.emptyDay.background);
+          rowFontColors.push(config.styles.weekend ? config.styles.weekend.fontColor : '#000000');
         } else {
           rowBackgrounds.push(config.styles.day.weekday);
+          rowFontColors.push('#000000');
         }
 
         // Content Logic
@@ -514,6 +520,7 @@ function drawMonth(sheet, year, month, startRow, eventData, monthCounter, config
       }
     }
     backgroundColors.push(rowBackgrounds);
+    fontColors.push(rowFontColors);
     richTextGrid.push(rowRichTexts);
 
     if (currentDay > daysInMonth) break;
@@ -523,6 +530,7 @@ function drawMonth(sheet, year, month, startRow, eventData, monthCounter, config
   if (numWeeks > 0) {
     const range = sheet.getRange(gridStartRow, 1, numWeeks, 7);
     range.setBackgrounds(backgroundColors);
+    range.setFontColors(fontColors);
     range.setRichTextValues(richTextGrid); // BATCHED WRITE
 
     range.setVerticalAlignment('top').setWrap(true).setFontSize(10).setFontFamily(config.styles.fontFamily);
@@ -560,6 +568,7 @@ function drawLateralCalendarLayout(sheet, eventData, startYear, config) {
   // --- CALENDAR GRID GENERATION ---
 
   const allBackgrounds = [];
+  const allFontColors = [];
   const allRichTexts = [];
   const allMonthNames = [];
   const startRow = 2;
@@ -578,20 +587,24 @@ function drawLateralCalendarLayout(sheet, eventData, startYear, config) {
 
     const rowRichTexts = [];
     const rowBackgrounds = [];
+    const rowFontColors = [];
 
     // Note: The grid is 31 columns wide (Days 1-31)
     for (let day = 1; day <= 31; day++) {
       if (day > daysInMonth) {
         rowBackgrounds.push(config.styles.emptyDay.background);
+        rowFontColors.push('#000000');
         rowRichTexts.push(SpreadsheetApp.newRichTextValue().setText('').build());
       } else {
         const date = new Date(year, month, day);
         const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
 
         if (dayOfWeek === 0 || dayOfWeek === 6) { // Weekend
-          rowBackgrounds.push(config.styles.emptyDay.background); // Texture for weekends
+          rowBackgrounds.push(config.styles.weekend ? config.styles.weekend.background : config.styles.emptyDay.background);
+          rowFontColors.push(config.styles.weekend ? config.styles.weekend.fontColor : '#000000');
         } else { // Weekday
           rowBackgrounds.push(config.styles.day.weekday);
+          rowFontColors.push('#000000');
         }
 
         const dayOfWeekStr = Utilities.formatDate(date, timeZone, "E");
@@ -601,6 +614,7 @@ function drawLateralCalendarLayout(sheet, eventData, startYear, config) {
       }
     }
     allBackgrounds.push(rowBackgrounds);
+    allFontColors.push(rowFontColors);
     allRichTexts.push(rowRichTexts);
   }
 
@@ -635,6 +649,7 @@ function drawLateralCalendarLayout(sheet, eventData, startYear, config) {
   // 2. Calendar Grid (Cols 2-32)
   const gridRange = sheet.getRange(startRow, 2, totalMonths, 31);
   gridRange.setBackgrounds(allBackgrounds);
+  gridRange.setFontColors(allFontColors);
   gridRange.setRichTextValues(allRichTexts);
 
   // 3. Row formatting
@@ -755,7 +770,7 @@ function createLateralCalendar() {
     targetSheet.deleteColumns(33, maxCols - 32);
   }
 
-  ui.alert('Success! Your "Lateral Calendar View" sheet has been created.\n\nFor best printing results, please use Landscape orientation and the "Fit to page" scale setting.');
+  ui.alert('Success! Your "Lateral Calendar View" sheet has been created.\n\nFor best printing results, please use Landscape orientation, set the scale to "Fit to height", and ensure Frozen Rows/Columns are turned OFF.');
 }
 
 
