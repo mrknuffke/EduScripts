@@ -883,7 +883,7 @@ function formatFailureReport(separationFailures, genderFailures, placementFailur
     if (placementFailures.length > 0) {
         report += '⚠️ PLACEMENT FAILURES:\n';
         placementFailures.forEach(f => {
-            report += `• ${f.studentName}: ${f.reason} \n`;
+            report += `• [${f.sectionName}] ${f.studentName}: ${f.reason} \n`;
         });
         report += '\n';
     }
@@ -891,7 +891,7 @@ function formatFailureReport(separationFailures, genderFailures, placementFailur
     if (separationFailures.length > 0) {
         report += '⚠️ SEPARATION VIOLATIONS:\n';
         separationFailures.forEach(f => {
-            report += `• ${f.studentA} and ${f.studentB} are at Table ${f.tableIndex + 1} \n`;
+            report += `• [${f.sectionName}] ${f.studentA} and ${f.studentB} are at Table ${f.tableIndex + 1} \n`;
             if (f.reason) report += `  Reason: ${f.reason} \n`;
         });
         report += '\n';
@@ -900,7 +900,7 @@ function formatFailureReport(separationFailures, genderFailures, placementFailur
     if (genderFailures.length > 0) {
         report += '⚠️ GENDER BALANCE ISSUES:\n';
         genderFailures.forEach(f => {
-            report += `• Table ${f.tableIndex + 1}: ${f.maleCount} M / ${f.femaleCount} F\n`;
+            report += `• [${f.sectionName}] Table ${f.tableIndex + 1}: ${f.maleCount} M / ${f.femaleCount} F\n`;
         });
         report += '\n';
     }
@@ -1395,6 +1395,47 @@ function generateRandomization(options = {}) {
             }
         });
 
+        // --- STAGE 1b: Mutual Exclusivity Validation ---
+        for (const group of buddiesForSection) {
+            for (let i = 0; i < group.length; i++) {
+                for (let j = i + 1; j < group.length; j++) {
+                    const p = [group[i], group[j]].sort().join('|');
+                    if (strictPairs.has(p)) {
+                        return { success: false, error: `Conflict in "${sectionName}": ${group[i]} and ${group[j]} are both Buddies and Separated.` };
+                    }
+                }
+            }
+            // Check Soft Group Conflict
+            for (const sg of softGroups) {
+                let foundCount = 0;
+                group.forEach(n => { if (sg.namesSet.has(n)) foundCount++; });
+                if (foundCount === sg.namesSet.size && group.length === sg.namesSet.size) {
+                    return { success: false, error: `Conflict in "${sectionName}": Group [${group.join(', ')}] are both Buddies and a Soft Separation group.` };
+                }
+            }
+            // Check Preferential Seating Conflict
+            if (prefsForSection) {
+                let currentIntersect = null;
+                for (const name of group) {
+                    if (prefsForSection[name]) {
+                        if (currentIntersect === null) {
+                            currentIntersect = new Set(prefsForSection[name]);
+                        } else {
+                            // Intersect current with this member's prefs
+                            const newIntersect = new Set();
+                            for (const t of prefsForSection[name]) {
+                                if (currentIntersect.has(t)) newIntersect.add(t);
+                            }
+                            currentIntersect = newIntersect;
+                        }
+                    }
+                }
+                if (currentIntersect !== null && currentIntersect.size === 0) {
+                    return { success: false, error: `Conflict in "${sectionName}": Buddy group [${group.join(', ')}] have incompatible Preferential Seating assignments.` };
+                }
+            }
+        }
+
         const historyForSection = assignmentHistory[sectionName] || {};
         const pairsForSection = pairHistory[sectionName] || {}; // { StudentA: [B, C] }
         const balancingAttribute = balancingConfig[sectionName];
@@ -1434,8 +1475,124 @@ function generateRandomization(options = {}) {
         const remainder = activeStudents.length % numTables;
         const targetCapacities = Array(numTables).fill(0).map((_, i) => baseSize + (i < remainder ? 1 : 0));
 
-        // --- STEP 2: Distribute Remaining ---
-        const shuffledStudents = shuffleArray(studentsToRandomize);
+        // --- STEP 2: Place Buddy Groups as Whole Units ---
+        // This guarantees buddy groups end up together instead of relying on score bonuses.
+        const placedByBuddyStep = new Set(); // Track names placed in this step
+
+        for (const buddyGroup of buddiesForSection) {
+            // Find student objects for this group that still need placement
+            const unplacedMembers = [];
+            let anchorTableIndex = -1; // If a member was already placed (e.g. preferential), anchor to their table
+
+            for (const name of buddyGroup) {
+                const stillNeeds = studentsToRandomize.find(s => s.name === name);
+                if (stillNeeds) {
+                    unplacedMembers.push(stillNeeds);
+                } else {
+                    // Already placed (likely preferential seating) — find which table they're at
+                    for (let t = 0; t < tableAssignments.length; t++) {
+                        if (tableAssignments[t].some(s => s.name === name)) {
+                            anchorTableIndex = t;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (unplacedMembers.length === 0) continue; // All already placed
+
+            // Determine the best table for the whole group
+            let bestTable = -1;
+
+            if (anchorTableIndex >= 0) {
+                // A buddy is already at a table (preferential seating) — join them there
+                bestTable = anchorTableIndex;
+            } else {
+                // Find a table that can fit the entire group, preferring emptier tables
+                // and avoiding separation violations
+                let bestScore = Infinity;
+                const shuffledTableIndices = shuffleArray(Array.from({ length: numTables }, (_, i) => i));
+
+                for (const t of shuffledTableIndices) {
+                    const spotsAvailable = targetCapacities[t] - tableAssignments[t].length;
+                    if (spotsAvailable < unplacedMembers.length) continue; // Won't fit
+
+                    // Check if placing the group here would violate any strict separation
+                    const currentTableNames = tableAssignments[t].map(s => s.name);
+                    let violations = 0;
+                    for (const member of unplacedMembers) {
+                        for (const seated of currentTableNames) {
+                            const p = [member.name, seated].sort().join('|');
+                            if (strictPairs.has(p)) violations++;
+                        }
+                    }
+
+                    // Score: prefer fewer violations, avoid recent history, then emptier tables
+                    let historyScore = 0;
+                    for (const member of unplacedMembers) {
+                        historyScore += getHistoryPenalty(member.name, t, historyForSection);
+                    }
+                    const score = (violations * 100000) + tableAssignments[t].length + historyScore;
+                    if (score < bestScore) {
+                        bestScore = score;
+                        bestTable = t;
+                    }
+                }
+            }
+
+            if (bestTable >= 0) {
+                // Place all unplaced members at the best table
+                for (const member of unplacedMembers) {
+                    tableAssignments[bestTable].push(member);
+                    placedByBuddyStep.add(member.name);
+                }
+                // Allow the table to exceed target capacity to keep buddies together
+                // (the capacity is a "target", not a hard limit)
+                if (tableAssignments[bestTable].length > targetCapacities[bestTable]) {
+                    targetCapacities[bestTable] = tableAssignments[bestTable].length;
+                }
+            } else {
+                // Couldn't find a table with enough room — place at the table with most space
+                let maxSpace = -1;
+                let fallbackTable = 0;
+                for (let t = 0; t < numTables; t++) {
+                    const space = targetCapacities[t] - tableAssignments[t].length;
+                    if (space > maxSpace) {
+                        maxSpace = space;
+                        fallbackTable = t;
+                    }
+                }
+                for (const member of unplacedMembers) {
+                    tableAssignments[fallbackTable].push(member);
+                    placedByBuddyStep.add(member.name);
+                }
+                targetCapacities[fallbackTable] = tableAssignments[fallbackTable].length;
+            }
+        }
+
+        // Remove buddy-placed students from the remaining pool
+        studentsToRandomize = studentsToRandomize.filter(s => !placedByBuddyStep.has(s.name));
+
+        // --- STEP 3: Distribute Remaining (Prioritize Separated Students) ---
+        const priorityStudents = [];
+        const standardStudents = [];
+
+        // Identify who needs "Special" attention (Separations — buddies already handled)
+        const namesInStrictPairs = new Set();
+        strictPairs.forEach(p => p.split('|').forEach(n => namesInStrictPairs.add(n)));
+        const namesInSoftGroups = new Set();
+        softGroups.forEach(g => g.original.forEach(n => namesInSoftGroups.add(n)));
+
+        studentsToRandomize.forEach(s => {
+            if (namesInStrictPairs.has(s.name) || namesInSoftGroups.has(s.name)) {
+                priorityStudents.push(s);
+            } else {
+                standardStudents.push(s);
+            }
+        });
+
+        // First place separated students (while tables are still open), then standard students
+        const shuffledStudents = [...shuffleArray(priorityStudents), ...shuffleArray(standardStudents)];
 
         let studentIdx = 0;
         while (studentIdx < shuffledStudents.length) {
@@ -1454,7 +1611,7 @@ function generateRandomization(options = {}) {
                     const p = [student.name, seatedName].sort().join('|');
                     return strictPairs.has(p);
                 });
-                if (breaksStrict) score += 10000;
+                if (breaksStrict) score += 100000; // Hard separation priority
 
 
                 // Penalty 1b: Soft Group Violation (Completing the group)
@@ -1471,15 +1628,16 @@ function generateRandomization(options = {}) {
 
                     return foundCount === (group.namesSet.size - 1);
                 });
-                if (breaksSoft) score += 5000;
+                if (breaksSoft) score += 50000;
 
 
                 // Penalty 2: History (Sticky Table Avoidance)
                 score += getHistoryPenalty(student.name, tableIdx, historyForSection);
 
                 // Bonus: Buddy Attraction (Negative Score)
+                // Now a massive bonus to keep them together, but less than strict separation
                 if (tableAssignments[tableIdx].some(seated => areBuddies(student.name, seated.name, buddiesForSection))) {
-                    score -= 50;
+                    score -= 75000;
                 }
 
                 // --- FEATURE 8: Social Mixer ---
@@ -1534,14 +1692,13 @@ function generateRandomization(options = {}) {
             }
 
             if (!placed) {
-                placementFailures.push({ studentName: student.name, reason: "Capacity reached/logic error" });
+                placementFailures.push({ sectionName: sectionName, studentName: student.name, reason: "Capacity reached/logic error" });
             }
             studentIdx++;
         }
 
-        // --- STEP 3: Fix Separation Violations ---
-        // --- STEP 3: Fix Separation Violations ---
-        fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection);
+        // --- STEP 4: Fix Separation Violations ---
+        fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection);
 
         // Check for remaining separation violations
         const remainingViolations = findViolations(tableAssignments, strictPairs, softGroups);
@@ -1567,6 +1724,7 @@ function generateRandomization(options = {}) {
             }
 
             separationFailures.push({
+                sectionName: sectionName,
                 studentA: sA,
                 studentB: sB,
                 tableIndex: v.tableIndex,
@@ -1574,15 +1732,15 @@ function generateRandomization(options = {}) {
             });
         });
 
-        // --- STEP 4: Fix Gender Balance ---
-        fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection);
+        // --- STEP 5: Fix Gender Balance ---
+        fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection);
 
         // Check for gender issues
         tableAssignments.forEach((t, idx) => {
             if (getGenderTableScore(t) >= 20) {
                 let m = 0, f = 0;
                 t.forEach(s => s.gender === 'M' ? m++ : (s.gender === 'F' ? f++ : null));
-                genderFailures.push({ tableIndex: idx, maleCount: m, femaleCount: f });
+                genderFailures.push({ sectionName: sectionName, tableIndex: idx, maleCount: m, femaleCount: f });
             }
         });
 
@@ -2255,7 +2413,7 @@ function updateVisualMap(allAssignments) {
  * @param {Object} prefsForSection
  * @returns {boolean} True if all violations were resolved, otherwise false.
  */
-function fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection) {
+function fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection) {
     if (strictPairs.size === 0 && softGroups.length === 0) return true;
 
     // Reduced attempts for performance. Smart swapping > brute force.
@@ -2289,7 +2447,7 @@ function fixSeparationViolations(tableAssignments, strictPairs, softGroups, pref
                 const destStudents = shuffleArray(destTable);
 
                 for (const studentToSwap of destStudents) {
-                    if (isSwapValid(studentToMove, studentToSwap, tableAssignments[violation.tableIndex], destTable, strictPairs, softGroups, prefsForSection, violation.tableIndex, otherTableIdx)) {
+                    if (isSwapValid(studentToMove, studentToSwap, tableAssignments[violation.tableIndex], destTable, strictPairs, softGroups, prefsForSection, violation.tableIndex, otherTableIdx, buddiesForSection)) {
 
                         // Perform Swap
                         const sourceTable = tableAssignments[violation.tableIndex];
@@ -2314,7 +2472,7 @@ function fixSeparationViolations(tableAssignments, strictPairs, softGroups, pref
  * Attempts to improve the total "Gender Score".
  * Optimized with lower attempt count.
  */
-function fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection) {
+function fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection) {
     const MAX_ATTEMPTS = 1000; // Reduced from 5000 for performance
     const populatedTables = [];
     tableAssignments.forEach((table, index) => {
@@ -2340,7 +2498,7 @@ function fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSec
 
         const scoreBefore = getGenderTableScore(tableA) + getGenderTableScore(tableB);
 
-        if (isSwapValid(studentA, studentB, tableA, tableB, strictPairs, softGroups, prefsForSection, tableA_wrapper.index, tableB_wrapper.index)) {
+        if (isSwapValid(studentA, studentB, tableA, tableB, strictPairs, softGroups, prefsForSection, tableA_wrapper.index, tableB_wrapper.index, buddiesForSection)) {
             tableA[sA_idx] = studentB;
             tableB[sB_idx] = studentA;
             const scoreAfter = getGenderTableScore(tableA) + getGenderTableScore(tableB);
@@ -2464,10 +2622,29 @@ function findViolations(tableAssignments, strictPairs, softGroups) {
 /**
  * Master Gatekeeper for Swaps.
  */
-function isSwapValid(studentToMove, studentToTakePlace, sourceTable, destTable, strictPairs, softGroups, prefsForSection, sourceTableIndex, destTableIndex) {
+function isSwapValid(studentToMove, studentToTakePlace, sourceTable, destTable, strictPairs, softGroups, prefsForSection, sourceTableIndex, destTableIndex, buddiesForSection) {
     if (prefsForSection) {
         if (prefsForSection[studentToMove.name] && !prefsForSection[studentToMove.name].includes(destTableIndex + 1)) return false;
         if (prefsForSection[studentToTakePlace.name] && !prefsForSection[studentToTakePlace.name].includes(sourceTableIndex + 1)) return false;
+    }
+
+    // --- Buddy Checks ---
+    // Prevent breaking up buddy groups during swaps
+    if (buddiesForSection && buddiesForSection.length > 0) {
+        const breaksBuddy = (studentToCheck, table) => {
+            return buddiesForSection.some(buddyGroup => {
+                if (buddyGroup.includes(studentToCheck.name)) {
+                    // Are there any OTHER buddies at this table?
+                    const otherBuddiesAtTable = table.filter(s => s.name !== studentToCheck.name && buddyGroup.includes(s.name));
+                    if (otherBuddiesAtTable.length > 0) return true;
+                }
+                return false;
+            });
+        };
+        // If moving studentToMove out of sourceTable breaks a buddy group, reject
+        if (breaksBuddy(studentToMove, sourceTable)) return false;
+        // If moving studentToTakePlace out of destTable breaks a buddy group, reject
+        if (breaksBuddy(studentToTakePlace, destTable)) return false;
     }
 
     // --- Strict & Soft Checks ---
