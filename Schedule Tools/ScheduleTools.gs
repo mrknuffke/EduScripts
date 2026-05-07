@@ -9,6 +9,10 @@ function onOpen() {
     .addItem("4. Color and Format Courses", "colorAndFormatCourses")
     .addSeparator()
     .addItem("5. Generate C/D Days (Day Swapper)", "daySwapper")
+    .addSeparator()
+    .addItem("Format All Schedule Sheets", "colorAndFormatAllSchedules")
+    .addItem("Refresh Courses from Schedule", "refreshConfigCourses")
+    .addItem("Validate Config Sheet", "validateConfig")
     .addToUi();
 }
 
@@ -64,6 +68,9 @@ function showTutorial() {
 // ==========================================
 
 const CONFIG_SHEET_NAME = "Department Config";
+const DATA_START_ROW = 6;
+const DATA_COL_START = "C";
+const DATA_COL_END = "U";
 
 function getConfigData() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -150,9 +157,6 @@ function saveConfigData(config) {
   
   if (!sheet) {
     sheet = ss.insertSheet(CONFIG_SHEET_NAME);
-  } else {
-    // If it exists, we don't want to completely clear it if they already made edits, 
-    // but the setup wizard handles creating it fresh.
   }
   
   var output = [
@@ -211,7 +215,9 @@ function getUniqueCoursesFromActiveSheet() {
   return Array.from(courses).sort();
 }
 
-// Initial defaults for fallback
+// Sample course template (Science department). Used as placeholder data when
+// no courses can be scanned from the active sheet during initial setup.
+// Replace or extend this object to provide defaults for other departments.
 const SCIENCE_DEFAULTS = {
   "Zoology": { bg: "#D9EAD3", font: "#000000" },
   "Marine Biology": { bg: "#D9EAD3", font: "#000000" },
@@ -325,6 +331,8 @@ function courseEntryEditor() {
         <div class="option"><label><input type="checkbox" id="keepLine2" checked> Line 3 (Room)</label></div>
         <div class="option"><label><input type="checkbox" id="keepLine3"> Line 4 (Block/Day)</label></div>
         <div class="option"><label><input type="checkbox" id="keepLine4" checked> Line 5 (Term)</label></div>
+        <hr style="margin: 15px 0;">
+        <div class="option"><label><input type="checkbox" id="applyAll"> Apply to all schedule sheets</label></div>
         <div style="margin-top: 20px;">
           <button class="btn" onclick="apply()">Apply</button>
           <button class="btn btn-cancel" onclick="google.script.host.close()">Cancel</button>
@@ -335,7 +343,8 @@ function courseEntryEditor() {
               keepLine1: document.getElementById('keepLine1').checked,
               keepLine2: document.getElementById('keepLine2').checked,
               keepLine3: document.getElementById('keepLine3').checked,
-              keepLine4: document.getElementById('keepLine4').checked
+              keepLine4: document.getElementById('keepLine4').checked,
+              applyAll: document.getElementById('applyAll').checked
             };
             document.querySelectorAll('button').forEach(b => b.disabled = true);
             document.querySelector('.header').innerText = 'Processing... Please wait.';
@@ -347,20 +356,47 @@ function courseEntryEditor() {
       </body>
     </html>
   `;
-  var htmlOutput = HtmlService.createHtmlOutput(html).setWidth(320).setHeight(280);
+  var htmlOutput = HtmlService.createHtmlOutput(html).setWidth(320).setHeight(310);
   SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Course Entry Editor');
 }
 
 function processCourseEntries(options) {
+  if (options.applyAll) {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheets = ss.getSheets().filter(function(s) {
+      return s.getName().indexOf("Schedule") !== -1 && s.getName() !== CONFIG_SHEET_NAME;
+    });
+    if (sheets.length === 0) {
+      SpreadsheetApp.getUi().alert("No schedule sheets found. Run 'Create Initial Schedule Grid' first.");
+      return;
+    }
+    var totalProcessed = 0;
+    for (var k = 0; k < sheets.length; k++) {
+      totalProcessed += processCourseEntriesOnSheet(sheets[k], options);
+    }
+    ss.toast("Processed " + totalProcessed + " cells across " + sheets.length + " schedule sheets.", "Success", 5);
+    return;
+  }
+
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sheet.getName() === CONFIG_SHEET_NAME) {
+    SpreadsheetApp.getUi().alert("Please switch to a schedule sheet before running this tool.");
+    return;
+  }
+  var count = processCourseEntriesOnSheet(sheet, options);
+  SpreadsheetApp.getActiveSpreadsheet().toast("Processed " + count + " course cells on \"" + sheet.getName() + "\".", "Success", 4);
+}
+
+function processCourseEntriesOnSheet(sheet, options) {
   var lastRow = sheet.getLastRow();
-  if (lastRow < 6) return;
+  if (lastRow < DATA_START_ROW) return 0;
   
-  var range = sheet.getRange("C6:U" + lastRow);
+  var range = sheet.getRange(DATA_COL_START + DATA_START_ROW + ":" + DATA_COL_END + lastRow);
   var data = range.getValues();
   var richTextValues = range.getRichTextValues();
 
   var config = getConfigData();
+  var processed = 0;
 
   for (var i = 0; i < data.length; i++) {
     for (var j = 0; j < data[i].length; j++) {
@@ -401,11 +437,12 @@ function processCourseEntries(options) {
       }
 
       richTextValues[i][j] = textValueBuilder.build();
+      processed++;
     }
   }
   
   range.setRichTextValues(richTextValues);
-  SpreadsheetApp.getActiveSpreadsheet().toast("Course entries processed successfully!", "Success", 4);
+  return processed;
 }
 
 // ==========================================
@@ -414,11 +451,47 @@ function processCourseEntries(options) {
 
 function colorAndFormatCourses() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  var lastRow = sheet.getLastRow();
-  var range = sheet.getRange("C6:U" + lastRow);
-  var data = range.getValues();
-
+  if (sheet.getName() === CONFIG_SHEET_NAME) {
+    SpreadsheetApp.getUi().alert("Please switch to a schedule sheet before running this tool.");
+    return;
+  }
   var config = getConfigData();
+  var result = colorAndFormatSheet(sheet, config);
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    "Formatted " + result.formatted + " cells (" + result.unmatched + " unmatched) using " + config.departmentName + " settings!",
+    "Success", 5
+  );
+}
+
+function colorAndFormatAllSchedules() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var config = getConfigData();
+  var sheets = ss.getSheets().filter(function(s) {
+    return s.getName().indexOf("Schedule") !== -1 && s.getName() !== CONFIG_SHEET_NAME;
+  });
+  if (sheets.length === 0) {
+    SpreadsheetApp.getUi().alert("No schedule sheets found. Run 'Create Initial Schedule Grid' first.");
+    return;
+  }
+  var totalFormatted = 0, totalUnmatched = 0;
+  for (var i = 0; i < sheets.length; i++) {
+    var result = colorAndFormatSheet(sheets[i], config);
+    totalFormatted += result.formatted;
+    totalUnmatched += result.unmatched;
+  }
+  ss.toast(
+    "Formatted " + totalFormatted + " cells across " + sheets.length + " sheets (" + totalUnmatched + " unmatched).",
+    "Success", 5
+  );
+}
+
+function colorAndFormatSheet(sheet, config) {
+  var lastRow = sheet.getLastRow();
+  var result = { formatted: 0, unmatched: 0 };
+  if (lastRow < DATA_START_ROW) return result;
+
+  var range = sheet.getRange(DATA_COL_START + DATA_START_ROW + ":" + DATA_COL_END + lastRow);
+  var data = range.getValues();
 
   var defaultStyle = {
     background: "#D9D9D9",
@@ -458,9 +531,11 @@ function colorAndFormatCourses() {
         if (cData) {
           backgrounds[i][j] = cData.bg || defaultStyle.background;
           fontColors[i][j] = cData.font || defaultStyle.font;
+          result.formatted++;
         } else {
           backgrounds[i][j] = defaultStyle.background;
           fontColors[i][j] = defaultStyle.font;
+          result.unmatched++;
         }
 
         horizontalAlignments[i][j] = config.horizontalAlignment;
@@ -505,11 +580,11 @@ function colorAndFormatCourses() {
   sheet.getRange("A2:U2").setBackground(config.semesterBg).setFontColor(config.semesterFont).setFontFamily(config.fontFamily);
   sheet.getRange("A4:U4").setBackground(config.dayBg).setFontColor(config.dayFont).setFontFamily(config.fontFamily);
   sheet.getRange("A5:U5").setBackground(config.blockBg).setFontColor(config.blockFont).setFontFamily(config.fontFamily);
-  if (lastRow >= 6) {
-    sheet.getRange("A6:A" + lastRow).setBackground(config.teacherBg).setFontColor(config.teacherFont).setFontFamily(config.fontFamily);
+  if (lastRow >= DATA_START_ROW) {
+    sheet.getRange("A" + DATA_START_ROW + ":A" + lastRow).setBackground(config.teacherBg).setFontColor(config.teacherFont).setFontFamily(config.fontFamily);
   }
   
-  SpreadsheetApp.getActiveSpreadsheet().toast("Courses colored and formatted using " + config.departmentName + " settings!", "Success", 4);
+  return result;
 }
 
 // ==========================================
@@ -668,12 +743,16 @@ function buildMasterSchedule() {
 
 function daySwapper() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  if (sheet.getName() === CONFIG_SHEET_NAME) {
+    SpreadsheetApp.getUi().alert("Please switch to a schedule sheet before running this tool.");
+    return;
+  }
   // A Day to C Day
-  copyColumns(sheet, "C", "D", "O", "P", 6); // A1, A2 -> C3, C4
-  copyColumns(sheet, "E", "F", "M", "N", 6); // A3, A4 -> C1, C2
+  copyColumns(sheet, "C", "D", "O", "P", DATA_START_ROW); // A1, A2 -> C3, C4
+  copyColumns(sheet, "E", "F", "M", "N", DATA_START_ROW); // A3, A4 -> C1, C2
   // B Day to D Day
-  copyColumns(sheet, "H", "I", "T", "U", 6); // B1, B2 -> D3, D4
-  copyColumns(sheet, "J", "K", "R", "S", 6); // B3, B4 -> D1, D2
+  copyColumns(sheet, "H", "I", "T", "U", DATA_START_ROW); // B1, B2 -> D3, D4
+  copyColumns(sheet, "J", "K", "R", "S", DATA_START_ROW); // B3, B4 -> D1, D2
   
   SpreadsheetApp.getActiveSpreadsheet().toast("C and D days successfully generated from A and B days!", "Success", 4);
 }
@@ -697,4 +776,163 @@ function copyColumns(sheet, srcCol1, srcCol2, destCol1, destCol2, startRow) {
   destRange1.setVerticalAlignments(srcRange1.getVerticalAlignments());
   destRange2.setHorizontalAlignments(srcRange2.getHorizontalAlignments());
   destRange2.setVerticalAlignments(srcRange2.getVerticalAlignments());
+  destRange1.setWraps(srcRange1.getWraps());
+  destRange2.setWraps(srcRange2.getWraps());
+  destRange1.setFontFamilies(srcRange1.getFontFamilies());
+  destRange2.setFontFamilies(srcRange2.getFontFamilies());
+}
+
+// ==========================================
+// REFRESH COURSES FROM SCHEDULE
+// ==========================================
+
+function refreshConfigCourses() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var configSheet = ss.getSheetByName(CONFIG_SHEET_NAME);
+  
+  if (!configSheet) {
+    SpreadsheetApp.getUi().alert("No config sheet found. Run 'Department Setup Wizard' first.");
+    return;
+  }
+  
+  var config = getConfigData();
+  var existingTitles = new Set(Object.keys(config.courses));
+  
+  // Build a set of abbreviations so we can also recognize already-abbreviated names
+  var existingAbbrs = new Set();
+  for (var t in config.courses) {
+    if (config.courses[t].abbr) existingAbbrs.add(config.courses[t].abbr);
+  }
+  
+  // Scan all schedule sheets for course names
+  var sheets = ss.getSheets().filter(function(s) {
+    return s.getName().indexOf("Schedule") !== -1 && s.getName() !== CONFIG_SHEET_NAME;
+  });
+  
+  var newCourses = [];
+  for (var s = 0; s < sheets.length; s++) {
+    var data = sheets[s].getDataRange().getValues();
+    for (var i = DATA_START_ROW - 1; i < data.length; i++) {
+      for (var j = 2; j < data[i].length; j++) {
+        var cell = String(data[i][j]).trim();
+        if (!cell) continue;
+        var firstLine = cell.split('\n')[0].trim();
+        var cleanTitle = firstLine.replace(/[\*\u200B-\u200D\uFEFF]/g, '').trim();
+        if (cleanTitle && cleanTitle.length > 2 && !existingTitles.has(cleanTitle) && !existingAbbrs.has(cleanTitle)) {
+          var lower = cleanTitle.toLowerCase();
+          if (lower.indexOf("block") === -1 && lower.indexOf("semester") === -1 && lower.indexOf("advisory") === -1 &&
+              lower !== "a day" && lower !== "b day" && lower !== "c day" && lower !== "d day" &&
+              lower !== "teacher" && lower !== "a" && lower !== "b") {
+            newCourses.push(cleanTitle);
+            existingTitles.add(cleanTitle);
+          }
+        }
+      }
+    }
+  }
+  
+  if (newCourses.length === 0) {
+    SpreadsheetApp.getUi().alert("All courses in your schedule sheets are already in the config. Nothing to add!");
+    return;
+  }
+  
+  newCourses.sort();
+  var lastRow = configSheet.getLastRow();
+  var output = [];
+  for (var i = 0; i < newCourses.length; i++) {
+    output.push([newCourses[i], newCourses[i], "#D9D9D9", "#000000"]);
+  }
+  configSheet.getRange(lastRow + 1, 1, output.length, 4).setValues(output);
+  
+  configSheet.activate();
+  SpreadsheetApp.getActiveSpreadsheet().toast("Added " + newCourses.length + " new course(s) to config. Don't forget to set their colors and abbreviations!", "Courses Refreshed", 6);
+}
+
+// ==========================================
+// VALIDATE CONFIG SHEET
+// ==========================================
+
+function validateConfig() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var configSheet = ss.getSheetByName(CONFIG_SHEET_NAME);
+  
+  if (!configSheet) {
+    SpreadsheetApp.getUi().alert("No config sheet found. Run 'Department Setup Wizard' first.");
+    return;
+  }
+  
+  var config = getConfigData();
+  var warnings = [];
+  
+  // Collect all course names from schedule sheets for cross-reference
+  var scheduleCourses = new Set();
+  var sheets = ss.getSheets().filter(function(s) {
+    return s.getName().indexOf("Schedule") !== -1 && s.getName() !== CONFIG_SHEET_NAME;
+  });
+  for (var s = 0; s < sheets.length; s++) {
+    var data = sheets[s].getDataRange().getValues();
+    for (var i = DATA_START_ROW - 1; i < data.length; i++) {
+      for (var j = 2; j < data[i].length; j++) {
+        var cell = String(data[i][j]).trim();
+        if (cell) {
+          var firstLine = cell.split('\n')[0].trim().replace(/[\*\u200B-\u200D\uFEFF]/g, '').trim();
+          if (firstLine) scheduleCourses.add(firstLine);
+        }
+      }
+    }
+  }
+  
+  // Validate each config course entry
+  var hexPattern = /^#[0-9A-Fa-f]{6}$/;
+  var configData = configSheet.getDataRange().getValues();
+  var courseStartIndex = -1;
+  for (var i = 0; i < configData.length; i++) {
+    if (configData[i][0] === "Course Title") {
+      courseStartIndex = i + 1;
+      break;
+    }
+  }
+  
+  if (courseStartIndex !== -1) {
+    for (var i = courseStartIndex; i < configData.length; i++) {
+      var rowNum = i + 1;
+      var title = configData[i][0];
+      var bg = String(configData[i][2]).trim();
+      var font = String(configData[i][3]).trim();
+      
+      if (!title) continue;
+      
+      // Check hex codes
+      if (bg && !hexPattern.test(bg)) {
+        warnings.push("Row " + rowNum + ": Background \"" + bg + "\" is not a valid hex color (e.g. #FF0000).");
+      }
+      if (font && !hexPattern.test(font)) {
+        warnings.push("Row " + rowNum + ": Font color \"" + font + "\" is not a valid hex color (e.g. #000000).");
+      }
+      
+      // Check if course exists in any schedule (by title or abbreviation)
+      var abbr = configData[i][1];
+      if (!scheduleCourses.has(title) && !scheduleCourses.has(abbr)) {
+        warnings.push("Row " + rowNum + ": \"" + title + "\" not found in any schedule sheet. It may be unused or misspelled.");
+      }
+    }
+  }
+  
+  // Also check structural color fields
+  for (var i = 0; i < configData.length; i++) {
+    if (courseStartIndex !== -1 && i >= courseStartIndex) break;
+    for (var j = 1; j < configData[i].length; j += 2) {
+      var val = String(configData[i][j]).trim();
+      if (val && val.indexOf("#") === 0 && !hexPattern.test(val)) {
+        warnings.push("Row " + (i + 1) + ", Col " + (j + 1) + ": \"" + val + "\" is not a valid hex color.");
+      }
+    }
+  }
+  
+  if (warnings.length === 0) {
+    SpreadsheetApp.getUi().alert("Config Validation", "✅ Everything looks good! No issues found.", SpreadsheetApp.getUi().ButtonSet.OK);
+  } else {
+    var msg = "Found " + warnings.length + " potential issue(s):\n\n" + warnings.join("\n\n");
+    SpreadsheetApp.getUi().alert("Config Validation", msg, SpreadsheetApp.getUi().ButtonSet.OK);
+  }
 }
