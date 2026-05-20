@@ -46,6 +46,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Gradebook Tools')
     .addItem('ℹ️ Help & Tutorial', 'showTutorialSidebar')
+    .addItem('🛠️ Setup Checker & Guide', 'showSetupGuide')
     .addSeparator()
     .addItem('📧 Email Reports (Selector)', 'openEmailSelector')
     .addItem('📂 Generate Reports (Drive)', 'openDriveSelector')
@@ -110,9 +111,9 @@ function generateGradebookTemplate() {
   sheet = ss.insertSheet("Demo Gradebook");
 
   // Set Headers using colors from the script logic
-  const headers = ["Section", "Name", "Email", "Assignment 1", "Assignment 2", "Assignment 3", "Summative Exam"];
-  const categories = ["", "", "", "Classwork", "Classwork", "Homework", "Assessments"];
-  const standards = ["", "", "", "Standard 1", "Standard 1", "Standard 2", "Standard 3"];
+  const headers = ["Section", "Name", "Email", "Parent Email", "Assignment 1", "Assignment 2", "Assignment 3", "Summative Exam"];
+  const categories = ["", "", "", "", "Classwork", "Classwork", "Homework", "Assessments"];
+  const standards = ["", "", "", "", "Standard 1", "Standard 1", "Standard 2", "Standard 3"];
 
   sheet.getRange(1, 1, 1, headers.length).setValues([categories]).setFontWeight("bold").setBackground("#e0e0e0");
   sheet.getRange(2, 1, 1, headers.length).setValues([headers]).setFontWeight("bold").setBackground("#434343").setFontColor("white");
@@ -120,11 +121,11 @@ function generateGradebookTemplate() {
 
   // Dummy Data
   const data = [
-    ["Block 1", "Potter, Harry", "harry@hogwarts.edu", "1", "1", "0", "95"],
-    ["Block 1", "Granger, Hermione", "hermione@hogwarts.edu", "1", "1", "1", "100"],
-    ["Block 1", "Weasley, Ron", "ron@hogwarts.edu", "0", "1", "Missing", "85"],
-    ["Block 2", "Malfoy, Draco", "draco@hogwarts.edu", "1", "Exempt", "1", "90"],
-    ["Block 2", "Lovegood, Luna", "luna@hogwarts.edu", "1", "1", "1", "92"]
+    ["Block 1", "Potter, Harry", "harry@hogwarts.edu", "james.potter@hogwarts.edu", "1", "1", "0", "95"],
+    ["Block 1", "Granger, Hermione", "hermione@hogwarts.edu", "mr.granger@londondentist.com", "1", "1", "1", "100"],
+    ["Block 1", "Weasley, Ron", "ron@hogwarts.edu", "molly.weasley@hogwarts.edu", "0", "1", "Missing", "85"],
+    ["Block 2", "Malfoy, Draco", "draco@hogwarts.edu", "lucius.malfoy@hogwarts.edu", "1", "Exempt", "1", "90"],
+    ["Block 2", "Lovegood, Luna", "luna@hogwarts.edu", "xenophilius.lovegood@quibbler.org", "1", "1", "1", "92"]
   ];
 
   sheet.getRange(4, 1, data.length, data[0].length).setValues(data);
@@ -147,16 +148,33 @@ function showStudentSelector(mode) {
 
   const nameColIndex = 1;
   let emailColIndex = -1;
+  let parentEmailColIndex = -1;
 
-  // Find Email Column
+  // Find Email & Parent Email Columns in first 2 rows
   for (let r = 0; r < 2; r++) {
     for (let c = 0; c < data[r].length; c++) {
-      if (data[r][c] && data[r][c].toLowerCase().includes('email')) {
+      if (!data[r][c]) continue;
+      const cellText = data[r][c].toLowerCase();
+      if (cellText.includes('parent') || cellText.includes('guardian')) {
+        parentEmailColIndex = c;
+      } else if (cellText.includes('email') && !cellText.includes('parent') && !cellText.includes('guardian')) {
         emailColIndex = c;
-        break;
       }
     }
-    if (emailColIndex !== -1) break;
+  }
+  // Fallback for Student Email: if not found by explicit search but there's another column containing "email"
+  if (emailColIndex === -1) {
+    for (let r = 0; r < 2; r++) {
+      for (let c = 0; c < data[r].length; c++) {
+        if (!data[r][c]) continue;
+        const cellText = data[r][c].toLowerCase();
+        if (cellText.includes('email') && c !== parentEmailColIndex) {
+          emailColIndex = c;
+          break;
+        }
+      }
+      if (emailColIndex !== -1) break;
+    }
   }
 
   // Collect Students
@@ -190,6 +208,7 @@ function showStudentSelector(mode) {
     }
 
     const email = (emailColIndex > -1 && row[emailColIndex]) ? row[emailColIndex] : "";
+    const parentEmail = (parentEmailColIndex > -1 && row[parentEmailColIndex]) ? row[parentEmailColIndex] : "";
 
     // SAFETY CHECK
     let isMismatch = false;
@@ -206,6 +225,7 @@ function showStudentSelector(mode) {
       row: r,
       name: name,
       email: email,
+      parentEmail: parentEmail,
       section: currentSection,
       isMismatch: isMismatch
     });
@@ -236,7 +256,7 @@ function showStudentSelector(mode) {
 /**
  * CORE PROCESSOR
  */
-function runReportBatch(mode, rowIndices) {
+function runReportBatch(mode, rowIndices, emailDest) {
   try {
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     const sheetName = sheet.getName().toLowerCase();
@@ -250,14 +270,14 @@ function runReportBatch(mode, rowIndices) {
 
     const reportTitle = `${semester} ${subjectName} Progress Report`;
 
-    return processGradebook(sheet, reportTitle, subjectName, mode, rowIndices);
+    return processGradebook(sheet, reportTitle, subjectName, mode, rowIndices, emailDest || 'both');
   } catch (e) {
     throw new Error("Line " + e.lineNumber + ": " + e.message);
   }
 }
 
 // --- REPORT GENERATION LOGIC ---
-function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
+function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, emailDest) {
   const data = sheet.getDataRange().getDisplayValues();
   const backgrounds = sheet.getDataRange().getBackgrounds();
   const fontColors = sheet.getDataRange().getFontColors();
@@ -333,9 +353,58 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
     }
   }
   let emailColIndex = -1;
+  let parentEmailColIndex = -1;
 
-  for (let i = 0; i < headers.length; i++) { if (headers[i] && headers[i].toLowerCase().includes('email')) { emailColIndex = i; break; } }
-  if (emailColIndex === -1 && categories) { for (let i = 0; i < categories.length; i++) { if (categories[i] && categories[i].toLowerCase().includes('email')) { emailColIndex = i; break; } } }
+  // Search headers
+  for (let i = 0; i < headers.length; i++) {
+    if (!headers[i]) continue;
+    const text = headers[i].toLowerCase();
+    if (text.includes('parent') || text.includes('guardian')) {
+      parentEmailColIndex = i;
+    } else if (text.includes('email') && !text.includes('parent') && !text.includes('guardian')) {
+      emailColIndex = i;
+    }
+  }
+
+  // Fallback to categories if not found in headers
+  if (emailColIndex === -1 && categories) {
+    for (let i = 0; i < categories.length; i++) {
+      if (!categories[i]) continue;
+      const text = categories[i].toLowerCase();
+      if (text.includes('email') && !text.includes('parent') && !text.includes('guardian')) {
+        emailColIndex = i;
+        break;
+      }
+    }
+  }
+  if (parentEmailColIndex === -1 && categories) {
+    for (let i = 0; i < categories.length; i++) {
+      if (!categories[i]) continue;
+      const text = categories[i].toLowerCase();
+      if (text.includes('parent') || text.includes('guardian')) {
+        parentEmailColIndex = i;
+        break;
+      }
+    }
+  }
+
+  // Fallback for Student Email: if not found by explicit search but there's another column containing "email"
+  if (emailColIndex === -1) {
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i] && headers[i].toLowerCase().includes('email') && i !== parentEmailColIndex) {
+        emailColIndex = i;
+        break;
+      }
+    }
+  }
+  if (emailColIndex === -1 && categories) {
+    for (let i = 0; i < categories.length; i++) {
+      if (categories[i] && categories[i].toLowerCase().includes('email') && i !== parentEmailColIndex) {
+        emailColIndex = i;
+        break;
+      }
+    }
+  }
 
   let cutoffColIndex = headers.length;
   const headerBgColors = backgrounds[headerRowIndex];
@@ -356,7 +425,6 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
       bgColor: headerBgColors[i],
       fontColor: headerFontColors[i],
       finalName: header,
-      finalCategory: "",
       finalCategory: "",
       isSummativeStandard: false,
       isQuizOrWebAssign: false,
@@ -536,20 +604,39 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
 
     else if (mode === 'preview') {
       if (previewCount >= 10) continue;
-      const studentEmail = (emailColIndex > -1) ? row[emailColIndex] : "No Email";
-      const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages);
+      const studentEmail = (emailColIndex > -1) ? row[emailColIndex] : "No Student Email";
+      const parentEmail = (parentEmailColIndex > -1) ? row[parentEmailColIndex] : "No Parent Email";
+      
+      const showStudent = (emailDest === 'student' || emailDest === 'both');
+      const showParent = (emailDest === 'parent' || emailDest === 'both') && parentEmail !== "";
 
-      previewHtml += `<div class="preview-box" style="margin-bottom: 40px; border-bottom: 4px solid #ccc; padding-bottom: 40px;">
-                        <div class="preview-header">PREVIEW ${previewCount + 1}: ${studentName} (${studentEmail})</div>
-                        ${htmlBody}
-                      </div>`;
+      if (showStudent) {
+        const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages, false);
+        previewHtml += `<div class="preview-box" style="margin-bottom: 40px; border-bottom: 4px solid #ccc; padding-bottom: 40px; background-color: #fcfcfc; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                          <div class="preview-header" style="background-color: #1a73e8; color: white; padding: 8px 12px; font-weight: bold; border-radius: 4px 4px 0 0; margin-bottom: 15px;">STUDENT PREVIEW ${previewCount + 1}: ${studentName} (${studentEmail})</div>
+                          ${htmlBody}
+                        </div>`;
+      }
+      
+      if (showParent) {
+        const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages, true);
+        previewHtml += `<div class="preview-box" style="margin-bottom: 40px; border-bottom: 4px solid #ccc; padding-bottom: 40px; background-color: #fcfcfc; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                          <div class="preview-header" style="background-color: #34a853; color: white; padding: 8px 12px; font-weight: bold; border-radius: 4px 4px 0 0; margin-bottom: 15px;">PARENT PREVIEW ${previewCount + 1}: For Parent of ${studentName} (${parentEmail})</div>
+                          ${htmlBody}
+                        </div>`;
+      }
       previewCount++;
     }
 
     else if (mode === 'email') {
       const studentEmail = (emailColIndex > -1) ? row[emailColIndex] : "";
-      if (studentEmail && studentEmail.includes('@')) {
-        const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages);
+      const parentEmail = (parentEmailColIndex > -1) ? row[parentEmailColIndex] : "";
+      
+      const sendToStudent = (emailDest === 'student' || emailDest === 'both') && studentEmail && studentEmail.includes('@');
+      const sendToParent = (emailDest === 'parent' || emailDest === 'both') && parentEmail && parentEmail.includes('@');
+
+      if (sendToStudent) {
+        const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages, false);
         try {
           const emailOptions = {
             to: studentEmail,
@@ -561,6 +648,21 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows) {
           MailApp.sendEmail(emailOptions);
           processedCount++;
         } catch (e) { Logger.log(`Email error ${studentName}: ${e.message}`); }
+      }
+
+      if (sendToParent) {
+        const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages, true);
+        try {
+          const emailOptions = {
+            to: parentEmail,
+            subject: `${titlePrefix} - Parent/Guardian Progress Report for ${studentName}`,
+            htmlBody: htmlBody
+          };
+          const replyTo = getReplyToEmail();
+          if (replyTo) emailOptions.replyTo = replyTo;
+          MailApp.sendEmail(emailOptions);
+          processedCount++;
+        } catch (e) { Logger.log(`Parent email error ${studentName}: ${e.message}`); }
       }
     }
   }
@@ -709,12 +811,21 @@ function printGroupedTableDoc(body, rows) {
   });
 }
 
-function generateHtmlReport(title, studentName, rows, hasMissing, subjectName, messages) {
-  let html = `<div style="font-family: Arial, sans-serif; color: #333; max-width: 600px;">`;
-  html += `<h2 style="text-align: center; color: #222;">${title}</h2>`;
-  html += `<h3 style="text-align: center; color: #555;">${studentName}</h3>`;
+function generateHtmlReport(title, studentName, rows, hasMissing, subjectName, messages, isParent) {
+  let html = `<div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; line-height: 1.6;">`;
+  html += `<h2 style="text-align: center; color: #222; margin-bottom: 5px;">${title}</h2>`;
+  html += `<h3 style="text-align: center; color: #555; margin-top: 0; margin-bottom: 20px;">${studentName}</h3>`;
 
-  if (!hasMissing) {
+  if (isParent) {
+    // Parent-specific welcoming and explanatory note
+    html += `<div style="background-color: #f8f9fa; border-left: 4px solid #1a73e8; padding: 15px; margin-bottom: 20px; border-radius: 0 4px 4px 0; font-size: 13px;">`;
+    html += `<p style="margin-top: 0; font-weight: bold; color: #1a73e8; font-size: 14px;">Dear Parent / Guardian,</p>`;
+    html += `<p style="margin-bottom: 10px;">This academic progress report is provided to help keep you informed about your student's status in our class. Below, you will find details on their assignments, assessments, and overall participation metrics.</p>`;
+    html += `<p style="margin-bottom: 10px;"><strong>What this report shows:</strong> It details specific assignments completed, scores earned on assessments, and any outstanding or incomplete formative work. A status of <strong>'Missing'</strong> or <strong>'Incomplete'</strong> indicates that the assignment was not submitted, which can have a significant impact on your student's learning and grade.</p>`;
+    html += `<p style="margin-bottom: 10px;"><strong>How you can help:</strong> We encourage you to take a few minutes to talk to your student about this report and ask them about what they are learning in our course. Active conversations at home can be incredibly supportive of their academic growth!</p>`;
+    html += `<p style="margin-bottom: 0;">If you have any questions, concerns, or if we can support your student in any way, please feel free to reply directly to this email. I would love to hear from you!</p>`;
+    html += `</div>`;
+  } else if (!hasMissing) {
     const msg = messages[Math.floor(Math.random() * messages.length)];
     html += `<div style="text-align: center; margin: 20px 0; padding: 15px; background-color: #e8f5e9; border-radius: 5px;">`;
     html += `<h3 style="color: #2E7D32; margin: 0;">${msg}</h3>`;
@@ -732,7 +843,7 @@ function generateHtmlReport(title, studentName, rows, hasMissing, subjectName, m
 
       if (otherRows.length > 0) html += generateHtmlTables(otherRows);
       if (summativeRows.length > 0) {
-        html += `<h4 style="margin-top: 20px;">Summative Standard Mastery:</h4>`;
+        html += `<h4 style="margin-top: 20px; border-bottom: 1px solid #ccc; padding-bottom: 3px; color: #444;">Summative Standard Mastery:</h4>`;
         html += generateHtmlTables(summativeRows);
       }
     } else {
@@ -823,6 +934,59 @@ function buildStudentSelectorHtml(students, mode) {
       h3 { margin: 0; color: #202124; font-size: 18px; font-weight: 500; }
       .subtitle { color: #5f6368; font-size: 13px; margin-top: 5px; }
 
+      /* Segmented Email Destination Control */
+      .dest-section {
+        margin-top: 15px;
+        padding-top: 12px;
+        border-top: 1px dashed #dadce0;
+      }
+      .dest-label-title {
+        font-weight: 600;
+        font-size: 12px;
+        color: #5f6368;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dest-container {
+        display: flex;
+        gap: 10px;
+      }
+      .dest-pill {
+        flex: 1;
+        border: 1px solid #dadce0;
+        border-radius: 6px;
+        padding: 8px 12px;
+        text-align: center;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        background: white;
+        transition: all 0.2s ease;
+        user-select: none;
+      }
+      .dest-pill:hover {
+        background: #f8f9fa;
+        border-color: #c0c1c4;
+      }
+      .dest-pill input[type="radio"] {
+        display: none;
+      }
+      .dest-pill.active {
+        background: #e8f0fe;
+        border-color: #1a73e8;
+        box-shadow: 0 1px 2px rgba(26, 115, 232, 0.15);
+      }
+      .dest-pill.active span {
+        color: #1967d2;
+        font-weight: 600;
+      }
+
       /* Content Area */
       #content { flex: 1; overflow-y: auto; padding: 10px 20px; }
       
@@ -833,15 +997,15 @@ function buildStudentSelectorHtml(students, mode) {
         display: flex; align-items: center;
       }
       .student-row { 
-        display: flex; align-items: center; padding: 8px 12px; margin-bottom: 2px;
-        background: white; border: 1px solid #dadce0; border-radius: 4px; transition: background 0.1s;
+        display: flex; align-items: center; padding: 10px 12px; margin-bottom: 4px;
+        background: white; border: 1px solid #dadce0; border-radius: 6px; transition: background 0.1s;
       }
       .student-row:hover { background: #f1f3f4; border-color: #d2e3fc; }
       
       /* Controls */
       input[type="checkbox"] { transform: scale(1.1); margin-right: 12px; cursor: pointer; }
       label { flex: 1; cursor: pointer; font-size: 14px; display: flex; flex-direction: column; justify-content: center; }
-      .email-sub { font-size: 11px; color: #70757a; margin-top: 2px; }
+      .email-sub { font-size: 11px; color: #70757a; margin-top: 3px; display: flex; gap: 15px; flex-wrap: wrap; }
       
       /* Badges */
       .badge { display: inline-block; padding: 2px 6px; border-radius: 12px; font-size: 10px; font-weight: bold; margin-left: 8px; }
@@ -879,6 +1043,26 @@ function buildStudentSelectorHtml(students, mode) {
     <div class="header">
       <h3>${mode === 'email' ? '📧 Email Student Reports' : '📂 Generate Drive Reports'}</h3>
       <div class="subtitle">Select students below to generate their progress reports.</div>
+      
+      <? if (mode === 'email') { ?>
+        <div class="dest-section">
+          <div class="dest-label-title">✉️ Send Emails To:</div>
+          <div class="dest-container">
+            <label class="dest-pill" id="pill_student">
+              <input type="radio" name="email_dest" value="student" onchange="updateDestPills(this)">
+              <span>👤 Student Only</span>
+            </label>
+            <label class="dest-pill" id="pill_parent">
+              <input type="radio" name="email_dest" value="parent" onchange="updateDestPills(this)">
+              <span>👥 Parent Only</span>
+            </label>
+            <label class="dest-pill active" id="pill_both">
+              <input type="radio" name="email_dest" value="both" checked onchange="updateDestPills(this)">
+              <span>✉️ Both</span>
+            </label>
+          </div>
+        </div>
+      <? } ?>
     </div>
 
     <!-- CONTENT -->
@@ -910,7 +1094,10 @@ function buildStudentSelectorHtml(students, mode) {
              <div><?= students[i].name ?> 
                <? if (students[i].isMismatch) { ?> <span class="badge badge-warn">Email Mismatch</span> <? } ?>
              </div>
-             <div class="email-sub"><?= students[i].email ?></div>
+             <div class="email-sub">
+               <span>👤 Student: <?= students[i].email || '<i style="color:#b0b0b0;">None</i>' ?></span>
+               <span>👥 Parent: <?= students[i].parentEmail || '<i style="color:#b0b0b0;">None</i>' ?></span>
+             </div>
            </label>
          </div>
        <? } ?>
@@ -928,6 +1115,13 @@ function buildStudentSelectorHtml(students, mode) {
     </div>
 
     <script>
+      function updateDestPills(radio) {
+        document.querySelectorAll('.dest-pill').forEach(pill => pill.classList.remove('active'));
+        if (radio.checked) {
+          radio.closest('.dest-pill').classList.add('active');
+        }
+      }
+
       function toggleAll(state) {
         document.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = state);
       }
@@ -954,6 +1148,13 @@ function buildStudentSelectorHtml(students, mode) {
            }
         }
 
+        // Get selected email destination option if in email mode or preview
+        let emailDest = 'both';
+        const selectedDest = document.querySelector('input[name="email_dest"]:checked');
+        if (selectedDest) {
+          emailDest = selectedDest.value;
+        }
+
         // UI Updates
         document.getElementById('loading').style.display = 'flex';
         document.getElementById('loading-text').innerText = (action === 'preview') ? 'Generating Preview...' : 'Processing...';
@@ -968,7 +1169,7 @@ function buildStudentSelectorHtml(students, mode) {
              document.getElementById('loading').style.display = 'none';
              alert('Error: ' + err.message);
           })
-          .runReportBatch(action, selected);
+          .runReportBatch(action, selected, emailDest);
       }
 
       function showPreview(htmlContent) {
@@ -1047,5 +1248,739 @@ function buildTutorialHtml() {
         <p style="font-size:10px; margin-top:5px;">Made available under a <a href="http://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank">CC BY-NC-SA 4.0 License</a>.</p>
         <a href="#" onclick="google.script.host.close()">Close Guide</a>
     </div>
+  `;
+}
+
+/**
+ * Opens the Gradebook Setup Checker & Guide Dialog.
+ */
+function showSetupGuide() {
+  const html = HtmlService.createHtmlOutput(buildSetupGuideHtml())
+    .setWidth(650)
+    .setHeight(680)
+    .setTitle('Gradebook Setup Checker & Guide');
+  SpreadsheetApp.getUi().showModalDialog(html, '🛠️ Gradebook Setup Checker & Guide');
+}
+
+/**
+ * Runs structural diagnostics on the active sheet and returns analysis.
+ */
+function runSetupVerification() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getActiveSheet();
+    const sheetName = sheet.getName();
+    const data = sheet.getDataRange().getDisplayValues();
+    
+    const results = {
+      sheetName: sheetName,
+      nameColFound: false,
+      nameColLetter: "",
+      emailColFound: false,
+      emailColLetter: "",
+      parentColFound: false,
+      parentColLetter: "",
+      studentCount: 0,
+      sectionCount: 0,
+      warnings: [],
+      successes: []
+    };
+
+    if (data.length < 2) {
+      results.warnings.push("The active sheet is empty or has fewer than 2 rows. It must contain at least 4 rows to represent a proper Gradebook.");
+      return results;
+    }
+
+    // Header checks inside Row 2
+    const headers = data[1]; // Row 2 is 0-indexed index 1
+    
+    // 1. Check Name Column
+    if (headers.length > 1 && headers[1] && headers[1].toLowerCase().includes("name")) {
+      results.nameColFound = true;
+      results.nameColLetter = "B";
+      results.successes.push("Column B correctly designated as 'Name'.");
+    } else {
+      let foundNameIdx = headers.findIndex(h => h && h.toLowerCase().includes("name"));
+      if (foundNameIdx !== -1) {
+        results.nameColFound = true;
+        results.nameColLetter = String.fromCharCode(65 + foundNameIdx);
+        results.warnings.push(`'Name' column found in Column ${results.nameColLetter} instead of Column B. Keeping student names in Column B is highly recommended.`);
+      } else {
+        results.warnings.push("No column containing 'Name' was found in Row 2. You need a column named 'Name' (usually Column B) to identify students.");
+      }
+    }
+
+    // 2. Search Email & Parent Email Columns
+    let emailColIdx = -1;
+    let parentEmailColIdx = -1;
+    for (let c = 0; c < headers.length; c++) {
+      if (!headers[c]) continue;
+      const cellText = headers[c].toLowerCase();
+      if (cellText.includes('parent') || cellText.includes('guardian')) {
+        parentEmailColIdx = c;
+      } else if (cellText.includes('email') && !cellText.includes('parent') && !cellText.includes('guardian')) {
+        emailColIdx = c;
+      }
+    }
+
+    if (emailColIdx !== -1) {
+      results.emailColFound = true;
+      results.emailColLetter = String.fromCharCode(65 + emailColIdx);
+      results.successes.push(`Student 'Email' column found in Column ${results.emailColLetter}.`);
+    } else {
+      results.warnings.push("No student 'Email' column was detected in Row 2. Add an 'Email' column to allow sending reports to students.");
+    }
+
+    if (parentEmailColIdx !== -1) {
+      results.parentColFound = true;
+      results.parentColLetter = String.fromCharCode(65 + parentEmailColIdx);
+      results.successes.push(`Parent/Guardian 'Parent Email' column found in Column ${results.parentColLetter}.`);
+    } else {
+      results.warnings.push("No 'Parent Email' column was found. If you wish to send copies to parents, add a column named 'Parent Email' or 'Guardian Email' in Row 2.");
+    }
+
+    // 3. Scan backgrounds/data for Student Rows & Section Dividers
+    const nameColIndex = 1;
+    const backgrounds = sheet.getDataRange().getBackgrounds();
+    const fontColors = sheet.getDataRange().getFontColors();
+    let currentSection = "Ungrouped";
+
+    for (let r = 3; r < data.length; r++) {
+      const row = data[r];
+      const firstCellBg = backgrounds[r][0];
+      const firstCellFont = fontColors[r][0];
+      const colA = row[0] ? String(row[0]).trim() : "";
+      const name = row[nameColIndex] ? String(row[nameColIndex]).trim() : "";
+
+      // DETECT SECTION HEADER
+      if (colA !== "" && (
+        firstCellBg === '#000000' ||
+        firstCellBg === '#434343' ||
+        (firstCellBg !== '#ffffff' && firstCellFont === '#ffffff') ||
+        colA.toLowerCase().includes('block') ||
+        (name === "" && !colA.includes("Average")))) {
+        results.sectionCount++;
+        currentSection = colA;
+        continue;
+      }
+
+      // FILTER JUNK
+      if (!name || name === '' || name === '0' ||
+        name.includes('Name:') || name === 'Student' || name === 'Preferred Name' ||
+        name.includes('Average') || name.includes('Sum') ||
+        colA.includes('Average') || colA.includes('Sum')) {
+        continue;
+      }
+
+      results.studentCount++;
+    }
+
+    if (results.studentCount > 0) {
+      results.successes.push(`Parsed ${results.studentCount} active student rows starting at Row 4.`);
+    } else {
+      results.warnings.push("No active students detected below Row 3. Ensure student names are entered starting in Row 4, and Column B is designated as 'Name'.");
+    }
+
+    if (results.sectionCount > 0) {
+      results.successes.push(`Detected ${results.sectionCount} class section dividers in Column A.`);
+    } else {
+      results.warnings.push("No section headers detected. To group students by class section, style a row with a solid background and input the section name (e.g. 'Block 1') in Column A.");
+    }
+
+    return results;
+  } catch (e) {
+    throw new Error("Verification Error: " + e.message);
+  }
+}
+
+/**
+ * Builds the HTML content for the Setup Checker & Guide Dialog.
+ */
+function buildSetupGuideHtml() {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body {
+          font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+          margin: 0;
+          padding: 0;
+          background-color: #f8f9fa;
+          color: #3c4043;
+          font-size: 14px;
+          line-height: 1.5;
+        }
+        
+        .container {
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+          box-sizing: border-box;
+        }
+
+        /* Navigation Tabs */
+        .tabs {
+          display: flex;
+          background-color: #ffffff;
+          border-bottom: 1px solid #dadce0;
+          padding: 10px 20px 0 20px;
+          flex-shrink: 0;
+        }
+        .tab-btn {
+          padding: 12px 24px;
+          cursor: pointer;
+          font-weight: 500;
+          font-size: 14px;
+          color: #5f6368;
+          background: none;
+          border: none;
+          border-bottom: 3px solid transparent;
+          outline: none;
+          transition: all 0.2s ease;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .tab-btn:hover {
+          color: #1a73e8;
+          background-color: #f8f9fa;
+          border-radius: 4px 4px 0 0;
+        }
+        .tab-btn.active {
+          color: #1a73e8;
+          border-bottom-color: #1a73e8;
+          font-weight: 600;
+        }
+
+        /* Panel Content */
+        .tab-content {
+          flex: 1;
+          overflow-y: auto;
+          padding: 20px 24px;
+          box-sizing: border-box;
+        }
+        .panel {
+          display: none;
+        }
+        .panel.active {
+          display: block;
+        }
+
+        h2 {
+          margin-top: 0;
+          font-size: 18px;
+          font-weight: 500;
+          color: #202124;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        p {
+          margin-top: 0;
+          margin-bottom: 15px;
+          color: #5f6368;
+          font-size: 13.5px;
+        }
+
+        /* Grid Table Mockup styling */
+        .mockup-card {
+          background: white;
+          border: 1px solid #dadce0;
+          border-radius: 8px;
+          padding: 16px;
+          margin-bottom: 20px;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .mockup-title {
+          font-weight: 600;
+          color: #202124;
+          font-size: 13px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 12px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .grid-mockup {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 11px;
+          font-family: monospace;
+          margin-bottom: 10px;
+          border: 1px solid #dadce0;
+        }
+        .grid-mockup th, .grid-mockup td {
+          border: 1px solid #dadce0;
+          padding: 6px 8px;
+          text-align: left;
+        }
+        .grid-mockup tr.header-cat {
+          background-color: #e0e0e0;
+          font-weight: bold;
+        }
+        .grid-mockup tr.header-main {
+          background-color: #434343;
+          color: white;
+          font-weight: bold;
+        }
+        .grid-mockup tr.header-std {
+          background-color: #f3f3f3;
+          font-style: italic;
+        }
+        .grid-mockup tr.section-row {
+          background-color: #000000;
+          color: white;
+          font-weight: bold;
+        }
+        .grid-mockup tr.student-row {
+          background-color: #ffffff;
+        }
+
+        .highlight-col {
+          border: 1.5px solid #1a73e8 !important;
+          background-color: #e8f0fe;
+        }
+
+        /* Bullet instruction styling */
+        .instruction-list {
+          padding-left: 20px;
+          margin-bottom: 20px;
+        }
+        .instruction-list li {
+          margin-bottom: 10px;
+          color: #3c4043;
+        }
+        .instruction-list strong {
+          color: #202124;
+        }
+
+        /* Live Checker elements */
+        .status-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: #e8f0fe;
+          border-radius: 8px;
+          padding: 12px 16px;
+          margin-bottom: 20px;
+          border: 1px solid #d2e3fc;
+        }
+        .status-title {
+          font-weight: 600;
+          color: #1967d2;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .status-btn {
+          background: #1a73e8;
+          color: white;
+          border: none;
+          padding: 6px 14px;
+          border-radius: 4px;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.2s;
+        }
+        .status-btn:hover {
+          background: #1765cc;
+        }
+
+        .check-item {
+          display: flex;
+          padding: 12px 16px;
+          background: white;
+          border: 1px solid #dadce0;
+          border-radius: 8px;
+          margin-bottom: 12px;
+          gap: 16px;
+          align-items: flex-start;
+          transition: box-shadow 0.2s ease;
+        }
+        .check-item:hover {
+          box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .check-icon {
+          font-size: 20px;
+          flex-shrink: 0;
+          margin-top: -2px;
+        }
+        .check-details {
+          flex: 1;
+        }
+        .check-title {
+          font-weight: 600;
+          color: #202124;
+          margin-bottom: 4px;
+        }
+        .check-desc {
+          font-size: 12.5px;
+          color: #5f6368;
+        }
+
+        .check-success { border-left: 4px solid #34a853; }
+        .check-success .check-icon { color: #34a853; }
+        .check-warning { border-left: 4px solid #f9ab00; }
+        .check-warning .check-icon { color: #f9ab00; }
+
+        /* Loader Overlay */
+        #checker-loading {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 40px 0;
+        }
+        .spinner {
+          border: 3px solid #f3f3f3;
+          border-top: 3px solid #1a73e8;
+          border-radius: 50%;
+          width: 32px;
+          height: 32px;
+          animation: spin 1s linear infinite;
+          margin-bottom: 16px;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+
+        /* Footer buttons */
+        .footer {
+          padding: 15px 24px;
+          background-color: #ffffff;
+          border-top: 1px solid #dadce0;
+          display: flex;
+          justify-content: flex-end;
+          gap: 12px;
+          flex-shrink: 0;
+        }
+        .btn {
+          padding: 8px 18px;
+          border-radius: 4px;
+          font-size: 13.5px;
+          font-weight: 500;
+          cursor: pointer;
+          border: 1px solid transparent;
+        }
+        .btn-secondary {
+          background: white;
+          color: #5f6368;
+          border-color: #dadce0;
+        }
+        .btn-secondary:hover {
+          background: #f8f9fa;
+          color: #202124;
+        }
+        .btn-primary {
+          background: #1a73e8;
+          color: white;
+        }
+        .btn-primary:hover {
+          background: #1765cc;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        
+        <!-- Navigation Tabs -->
+        <div class="tabs">
+          <button class="tab-btn active" onclick="switchTab(event, 'tutorial-panel')">
+            📖 1. Sheet Setup Tutorial
+          </button>
+          <button class="tab-btn" onclick="switchTab(event, 'checker-panel')">
+            🔍 2. Live Setup Checker
+          </button>
+        </div>
+
+        <!-- 1. Setup Tutorial Panel -->
+        <div id="tutorial-panel" class="tab-content panel active">
+          <h2>How to Set Up Your Gradebook Sheet</h2>
+          <p>The Gradebook Reporter scripts look for specific cells, formatting, and structures to generate individual progress reports successfully. Set up your active sheet using the layout below:</p>
+          
+          <div class="mockup-card">
+            <div class="mockup-title">📊 Gradebook Spreadsheet Structure Mockup</div>
+            <table class="grid-mockup">
+              <thead>
+                <tr class="header-cat">
+                  <td>Row 1 (Categories)</td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td>Classwork</td>
+                  <td>Classwork</td>
+                  <td>Homework</td>
+                  <td>Assessments</td>
+                </tr>
+                <tr class="header-main">
+                  <td>Row 2 (Headers)</td>
+                  <td>Section</td>
+                  <td class="highlight-col">Name</td>
+                  <td class="highlight-col">Email</td>
+                  <td>Parent Email</td>
+                  <td>Assignment 1</td>
+                  <td>Assignment 2</td>
+                  <td>Exam 1</td>
+                </tr>
+                <tr class="header-std">
+                  <td>Row 3 (Standards)</td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td>Standard 1</td>
+                  <td>Standard 1</td>
+                  <td>Standard 2</td>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="section-row">
+                  <td>Row 4 (Divider)</td>
+                  <td colspan="7">Block 1</td>
+                </tr>
+                <tr class="student-row">
+                  <td>Row 5 (Student)</td>
+                  <td>Block 1</td>
+                  <td class="highlight-col">Potter, Harry</td>
+                  <td class="highlight-col">harry@hogwarts.edu</td>
+                  <td>james.potter@hogwarts.edu</td>
+                  <td>1</td>
+                  <td>1</td>
+                  <td>95</td>
+                </tr>
+                <tr class="student-row">
+                  <td>Row 6 (Student)</td>
+                  <td>Block 1</td>
+                  <td class="highlight-col">Granger, Hermione</td>
+                  <td class="highlight-col">hermione@hogwarts.edu</td>
+                  <td>mr.granger@dentist.com</td>
+                  <td>1</td>
+                  <td>1</td>
+                  <td>100</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="font-size: 11px; color:#70757a; text-align: center;">
+              * Highlighted columns (<b>Name</b> and <b>Email</b>) are strictly required for reports to work.
+            </div>
+          </div>
+
+          <ul class="instruction-list">
+            <li>
+              <strong>Row 1: Categories Row</strong> — Categorizes assignment columns. Merged cells or filled cells categorizing headers below them (e.g. <i>Classwork, Homework, Assessments</i>).
+            </li>
+            <li>
+              <strong>Row 2: Header Labels Row</strong> — Must contain exact column header names:
+              <ul>
+                <li>Column A: <strong>Section</strong> (class/block designation).</li>
+                <li>Column B: <strong>Name</strong> (entered as <i>"LastName, FirstName"</i> or <i>"FirstName LastName"</i>).</li>
+                <li>Any Column: <strong>Email</strong> (student email column).</li>
+                <li>Any Column: <strong>Parent Email</strong> (optional, adjacent column containing parent/guardian emails).</li>
+                <li>Columns E+: Individual assignment names.</li>
+              </ul>
+            </li>
+            <li>
+              <strong>Row 3: Standards / Targets Row</strong> — Used optionally. Used to map standards/learning targets to assignments. If not using standards, keep this row empty but do NOT delete it.
+            </li>
+            <li>
+              <strong>Row 4+: Student Data & Dividers</strong>
+              <ul>
+                <li><strong>Section Dividers</strong>: To group students into class periods, style a full row with a solid background (e.g., black or dark gray) and place the block name (e.g. <i>Block 1</i>) in Column A.</li>
+                <li><strong>Student Rows</strong>: Student details and grade records. Formula cells or summary averages are automatically skipped.</li>
+              </ul>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 2. Live Setup Checker Panel -->
+        <div id="checker-panel" class="tab-content panel">
+          <h2>Active Sheet Health Check</h2>
+          <p>Scan your current active sheet to verify that all structural parts are correctly aligned and formatted.</p>
+          
+          <div class="status-header">
+            <div class="status-title">
+              📋 Active Sheet: <span id="sheet-name-label" style="font-weight: bold; color: #202124;">Loading...</span>
+            </div>
+            <button class="status-btn" onclick="runCheck()">🔄 Refresh Diagnostics</button>
+          </div>
+
+          <!-- Loading Indicator -->
+          <div id="checker-loading">
+            <div class="spinner"></div>
+            <div style="color: #5f6368; font-size: 13px;">Analyzing spreadsheet layouts...</div>
+          </div>
+
+          <!-- Check Results -->
+          <div id="checker-results" style="display:none;"></div>
+        </div>
+
+        <!-- Dialog Footer -->
+        <div class="footer">
+          <button class="btn btn-secondary" onclick="google.script.host.close()">Close</button>
+          <button class="btn btn-primary" onclick="generateDemo()">📘 Create Demo Sheet</button>
+        </div>
+
+      </div>
+
+      <script>
+        // Switch between tabs
+        function switchTab(evt, panelId) {
+          document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+          document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+          
+          evt.currentTarget.classList.add('active');
+          document.getElementById(panelId).classList.add('active');
+          
+          if (panelId === 'checker-panel') {
+            runCheck();
+          }
+        }
+
+        // Run structural checks
+        function runCheck() {
+          document.getElementById('checker-loading').style.display = 'flex';
+          document.getElementById('checker-results').style.display = 'none';
+
+          google.script.run
+            .withSuccessHandler((res) => {
+              document.getElementById('checker-loading').style.display = 'none';
+              renderCheckerResults(res);
+            })
+            .withFailureHandler((err) => {
+              document.getElementById('checker-loading').style.display = 'none';
+              const resultsDiv = document.getElementById('checker-results');
+              resultsDiv.innerHTML = '<div class="check-item check-warning"><span class="check-icon">⚠️</span><div class="check-details"><div class="check-title">Analysis Failed</div><div class="check-desc">' + err.message + '</div></div></div>';
+              resultsDiv.style.display = 'block';
+            })
+            .runSetupVerification();
+        }
+
+        // Render diagnostics checklist
+        function renderCheckerResults(res) {
+          document.getElementById('sheet-name-label').innerText = res.sheetName || 'Unknown Sheet';
+          const resultsDiv = document.getElementById('checker-results');
+          resultsDiv.innerHTML = '';
+
+          let html = '';
+
+          // 1. Name Column Check
+          if (res.nameColFound) {
+            html += '<div class="check-item check-success">' +
+                    '<span class="check-icon">✅</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Student Name Column</div>' +
+                      '<div class="check-desc">Found in Column <b>' + res.nameColLetter + '</b>. Student names are correctly located for reporting.</div>' +
+                    '</div>' +
+                  '</div>';
+          } else {
+            html += '<div class="check-item check-warning">' +
+                    '<span class="check-icon">⚠️</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Student Name Column Missing</div>' +
+                      '<div class="check-desc">We couldn\'t find a column labeled "Name" in Row 2. You need to designate Column B as "Name" for the script to function.</div>' +
+                    '</div>' +
+                  '</div>';
+          }
+
+          // 2. Student Email Check
+          if (res.emailColFound) {
+            html += '<div class="check-item check-success">' +
+                    '<span class="check-icon">✅</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Student Email Column</div>' +
+                      '<div class="check-desc">Found in Column <b>' + res.emailColLetter + '</b>. Student progress reports can be dispatched.</div>' +
+                    '</div>' +
+                  '</div>';
+          } else {
+            html += '<div class="check-item check-warning">' +
+                    '<span class="check-icon">⚠️</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Student Email Column Missing</div>' +
+                      '<div class="check-desc">No column labeled "Email" was detected in Row 2. Progress reports cannot be sent via email without a student email column.</div>' +
+                    '</div>' +
+                  '</div>';
+          }
+
+          // 3. Parent Email Check
+          if (res.parentColFound) {
+            html += '<div class="check-item check-success">' +
+                    '<span class="check-icon">✅</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Parent/Guardian Email Column</div>' +
+                      '<div class="check-desc">Found in Column <b>' + res.parentColLetter + '</b>. You can now elect to copy reports to parents/guardians.</div>' +
+                    '</div>' +
+                  '</div>';
+          } else {
+            html += '<div class="check-item check-warning">' +
+                    '<span class="check-icon">ℹ️</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Parent Email Column (Optional)</div>' +
+                      '<div class="check-desc">No column labeled "Parent Email" or "Guardian Email" was found. While standard reports will work, adding one allows you to send copies to parents!</div>' +
+                    '</div>' +
+                  '</div>';
+          }
+
+          // 4. Student Count Check
+          if (res.studentCount > 0) {
+            html += '<div class="check-item check-success">' +
+                    '<span class="check-icon">✅</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Active Student Rows</div>' +
+                      '<div class="check-desc">Correctly loaded <b>' + res.studentCount + '</b> student rows. Calculations, averages, and empty headers are excluded.</div>' +
+                    '</div>' +
+                  '</div>';
+          } else {
+            html += '<div class="check-item check-warning">' +
+                    '<span class="check-icon">⚠️</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">No Students Detected</div>' +
+                      '<div class="check-desc">We couldn\'t find any student rows starting at Row 4. Verify your student names are written starting at row 4, column B.</div>' +
+                    '</div>' +
+                  '</div>';
+          }
+
+          // 5. Section Dividers Check
+          if (res.sectionCount > 0) {
+            html += '<div class="check-item check-success">' +
+                    '<span class="check-icon">✅</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">Section Dividers</div>' +
+                      '<div class="check-desc">Found <b>' + res.sectionCount + '</b> class dividers in Column A. Students will be categorized by class/block in the selector.</div>' +
+                    '</div>' +
+                  '</div>';
+          } else {
+            html += '<div class="check-item check-warning">' +
+                    '<span class="check-icon">ℹ️</span>' +
+                    '<div class="check-details">' +
+                      '<div class="check-title">No Section Dividers (Optional)</div>' +
+                      '<div class="check-desc">No group headers were found in Column A. To group students by period or class block, fill a row with a solid background and write the name in Column A.</div>' +
+                    '</div>' +
+                  '</div>';
+          }
+
+          resultsDiv.innerHTML = html;
+          resultsDiv.style.display = 'block';
+        }
+
+        // Trigger Demo Gradebook Generator
+        function generateDemo() {
+          google.script.run
+            .withSuccessHandler(() => {
+              alert("Demo Gradebook sheet successfully created! Switch to the 'Demo Gradebook' sheet tab to see a fully structured sample gradebook.");
+              google.script.host.close();
+            })
+            .withFailureHandler((err) => {
+              alert("Error generating demo sheet: " + err.message);
+            })
+            .generateGradebookTemplate();
+        }
+      </script>
+    </body>
+    </html>
   `;
 }
