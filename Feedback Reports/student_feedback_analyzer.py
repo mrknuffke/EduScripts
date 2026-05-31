@@ -435,7 +435,11 @@ def create_sentiment_evolution_chart(class_df, course, period_order, label_map, 
     ax.set_title(f"Sentiment Distribution Over Time: {course}", fontsize=14, pad=20, color='#222222', loc='left')
     ax.set_xlabel(None)
     ax.set_ylim(0, 100)
-    ax.set_yticklabels([f"{int(y)}%" for y in ax.get_yticks()], color='#555555')
+    
+    ticks = ax.get_yticks()
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([f"{int(y)}%" for y in ticks], color='#555555')
+    
     plt.xticks(rotation=0, ha='center', fontsize=10, color='#333333')
     
     ax.legend(title='', bbox_to_anchor=(1.02, 1), loc='upper left', frameon=False, labelcolor='#444444')
