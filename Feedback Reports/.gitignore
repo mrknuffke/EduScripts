@@ -1,0 +1,17 @@
+# Ignore generated feedback output reports
+reports/
+
+# Ignore any PDFs and PNGs (generated reports and charts)
+*.pdf
+*.png
+
+# Ignore Python caches and system files
+__pycache__/
+*.pyc
+.DS_Store
+
+# Ignore private configurations
+.student_feedback_analyzer.json
+
+# Ignore raw data CSV files to protect student privacy
+*.csv
