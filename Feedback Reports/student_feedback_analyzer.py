@@ -84,7 +84,7 @@ def launch_gui():
     config = load_config()
     data_df = [None]
     analysis_mode = tk.StringVar(value="point_in_time")
-    selected_period = tk.StringVar()
+    selected_periods = []
     periods_list = []
     course_vars = {}
     
@@ -182,9 +182,24 @@ def launch_gui():
             
         selection = period_listbox.curselection()
         if selection:
-            selected_period.set(period_listbox.get(selection[0]))
+            selected_indices = sorted(list(selection))
+            first = selected_indices[0]
+            last = selected_indices[-1]
+            if len(selected_indices) != (last - first + 1):
+                filled_indices = list(range(first, last + 1))
+                period_listbox.selection_clear(0, tk.END)
+                for idx in filled_indices:
+                    period_listbox.selection_set(idx)
+                selected_indices = filled_indices
+                messagebox.showinfo(
+                    "Contiguous Timeline Enforced",
+                    "To ensure chronological trends are contiguous, intermediate survey periods have been automatically selected."
+                )
+            nonlocal selected_periods
+            selected_periods.clear()
+            selected_periods.extend([period_listbox.get(i) for i in selected_indices])
         else:
-            selected_period.set("All Data")
+            selected_periods = list(periods_list)
             
         root.withdraw()
         root.update_idletasks()
@@ -216,8 +231,8 @@ def launch_gui():
     tk.Radiobutton(mode_frame, text="Point in Time (Select Period Below)", variable=analysis_mode, value="point_in_time").pack(anchor=tk.W)
     tk.Radiobutton(mode_frame, text="Longitudinal Trends (Compare All Periods)", variable=analysis_mode, value="longitudinal").pack(anchor=tk.W)
     
-    tk.Label(root, text="Select Survey Period (for Point in Time):").pack(pady=5)
-    period_listbox = tk.Listbox(root, height=5, selectmode=tk.SINGLE, width=60)
+    tk.Label(root, text="Select Survey Period(s) (Hold Shift/Cmd for multiple):").pack(pady=5)
+    period_listbox = tk.Listbox(root, height=8, selectmode=tk.EXTENDED, width=60)
     period_listbox.pack()
     
     tk.Label(root, text="Select Courses to Analyze:", font=("Arial", 12, "bold")).pack(pady=10)
@@ -236,7 +251,7 @@ def launch_gui():
     except Exception:
         pass
     # Do NOT destroy root here so it can be reused for the completion popup.
-    return data_df[0], analysis_mode.get(), selected_period.get(), selected_courses_list, root
+    return data_df[0], analysis_mode.get(), selected_periods, selected_courses_list, root
 
 def build_period_date_labels(df):
     """Build a map from Survey_Period -> short date-range label (e.g., 'Oct 3-7' or 'Oct 3')."""
@@ -379,6 +394,119 @@ def create_reference_page(pdf, is_longitudinal):
     plt.tight_layout()
     pdf.savefig(fig)
     plt.close(fig)
+
+def get_period_slug(selected_periods, periods_list):
+    if not selected_periods or len(selected_periods) == len(periods_list):
+        return "all_data"
+    elif len(selected_periods) == 1:
+        return clean_filename(selected_periods[0]).lower()
+    else:
+        # Extract period numbers if present
+        nums = []
+        for p in selected_periods:
+            if "Period " in p:
+                try:
+                    num = p.split("Period ")[1].split(":")[0]
+                    nums.append(int(num))
+                except Exception:
+                    pass
+        if nums:
+            nums = sorted(nums)
+            if nums[-1] - nums[0] == len(nums) - 1:
+                return f"periods_{nums[0]}_to_{nums[-1]}"
+            else:
+                return "periods_" + "_".join(map(str, nums))
+        return "combined_periods"
+
+def create_master_reference_guide(run_dir, is_longitudinal, has_consolidated, selected_periods=None):
+    """Creates a standalone PDF guide explaining all reports generated in the run."""
+    import textwrap
+    from matplotlib.backends.backend_pdf import PdfPages
+    pdf_path = os.path.join(run_dir, "Report_Reference_Guide.pdf")
+    
+    with PdfPages(pdf_path) as pdf:
+        fig, ax = plt.subplots(figsize=(8.5, 11))
+        ax.axis('off')
+        
+        # Title
+        ax.text(0.05, 0.95, "Feedback Reports: Master Explanatory Guide", fontsize=18, fontweight='bold', color='#1a1a1a', ha='left', va='top')
+        ax.text(0.05, 0.91, "Descriptions & Interpretations of All Generated Reports", fontsize=11, color='#555555', ha='left', va='top')
+        ax.plot([0.05, 0.95], [0.89, 0.89], color='#2a9d8f', linewidth=2)
+        
+        y = 0.85
+        
+        # Introduction
+        intro = (
+            "This guide describes the purpose, metrics, and visual design conventions of the feedback reports "
+            "generated in this directory. Refer to this page to understand how to read and interpret the results."
+        )
+        if selected_periods:
+            intro += f"\n\nSelected Survey Timeline: {', '.join(selected_periods)}"
+            
+        ax.text(0.05, y, textwrap.fill(intro, width=85), fontsize=10, color='#333333', ha='left', va='top')
+        y -= 0.02 * len(textwrap.fill(intro, width=85).split('\n')) + 0.04
+        
+        # Reports list
+        reports = []
+        if is_longitudinal:
+            reports.append((
+                "1. Longitudinal Trends Report (Longitudinal_Trends_Report.pdf)",
+                "Provides chronological trend analysis across all selected survey periods. Includes:\n"
+                "• Response Volume: Tracks student participation rates over time.\n"
+                "• In-Class Score Trends: Small-multiples comparing each course to the overall average.\n"
+                "• Positive Sentiment Shift: A slopegraph showing first-to-last period sentiment trajectory.\n"
+                "• Average Score Over Time: Visual comparison of course score vs. general school score.\n"
+                "• Sentiment Distribution Over Time: Compositional stacked bars of student feelings.\n"
+                "• Feeling-Word Heatmap: Tracks frequency shifts of top feeling words chronologically.\n"
+                "• Score Distributions Over Time (Violins): Density curves showing full score variance over time."
+            ))
+        else:
+            reports.append((
+                "1. Class Level Charts (Class_Level_Charts.pdf)",
+                "Detailed diagnostic visualizations for the selected survey period. Includes:\n"
+                "• Feelings Histogram: Distribution of positive, neutral, and negative emotion words.\n"
+                "• Score Comparison Bubble Chart: Grid mapping course scores against school scores.\n"
+                "• Score Distribution by Sentiment: Boxplot comparing scores across emotional states.\n"
+                "• Score Correlation Plot: Scatter plot and Pearson 'r' linking class and school ratings."
+            ))
+            
+        if has_consolidated:
+            reports.append((
+                "2. Consolidated Feedback Report (Consolidated_Feedback_Report.pdf)",
+                "A comprehensive tabular and textual summary for the survey period. Includes:\n"
+                "• Statistical Summary: Metrics (Mean, Median, Mode, Std Dev) for class vs. school.\n"
+                "• Sentiment Breakdown: Percentages of positive, neutral, and negative responses.\n"
+                "• Top 10 Feeling Words: Quick list of the most frequent emotional descriptors.\n"
+                "• Qualitative Comments: Formatted list of all open-ended student responses.\n"
+                "• Statistical Significance: Cohen's d paired effect size to test if the class rating "
+                "is statistically different from the student's overall school rating."
+            ))
+            
+        reports.append((
+            "3. Individual Charts PNGs (pngs/ subdirectory)",
+            "High-resolution (300 DPI) standalone image files for every single visualization "
+            "generated in the reports. These are perfect for inserting directly into slide "
+            "presentations, emails, or spreadsheets."
+        ))
+        
+        for title, desc in reports:
+            # Section header
+            ax.text(0.05, y, title, fontsize=12, fontweight='bold', color='#1d3557', ha='left', va='top')
+            y -= 0.025
+            
+            # Paragraph
+            lines = desc.split('\n')
+            for line in lines:
+                wrapped = textwrap.fill(line, width=95)
+                ax.text(0.05, y, wrapped, fontsize=9.5, color='#333333', ha='left', va='top')
+                y -= 0.018 * len(wrapped.split('\n'))
+            y -= 0.025
+            
+        # Footer note
+        ax.text(0.5, 0.05, "Generated by Student Feedback Analyzer • EduScripts", fontsize=8, color='#888888', ha='center')
+        
+        pdf.savefig(fig)
+        plt.close(fig)
 
 def create_score_trends_chart(class_df, course, period_order, label_map, pdf, png_path=None):
     print(f"  > Generating Score Trends for '{course}'...")
@@ -1415,9 +1543,9 @@ if __name__ == "__main__":
     import time
     result = launch_gui()
     if isinstance(result, tuple) and len(result) == 5:
-        df, analysis_mode, selected_period, selected_courses, root = result
+        df, analysis_mode, selected_periods, selected_courses, root = result
     elif isinstance(result, tuple) and len(result) == 4:
-        df, analysis_mode, selected_period, selected_courses = result
+        df, analysis_mode, selected_periods, selected_courses = result
         root = None
     else:
         df = None
@@ -1428,6 +1556,30 @@ if __name__ == "__main__":
         run_start = time.time() - 1  # small buffer for filesystem timestamp resolution
 
         df[FEELING_WORD_COL] = df[FEELING_WORD_COL].astype(str).str.strip().str.title()
+
+        # Build chronological list of all survey periods in the dataset
+        if TIMESTAMP_COL in df.columns:
+            df_temp = df.copy()
+            df_temp[TIMESTAMP_COL] = pd.to_datetime(df_temp[TIMESTAMP_COL], errors='coerce')
+            df_temp = df_temp.dropna(subset=[TIMESTAMP_COL]).sort_values(TIMESTAMP_COL)
+            df_temp['Time_Gap'] = df_temp[TIMESTAMP_COL].diff()
+            df_temp['Period_Group'] = (df_temp['Time_Gap'] > pd.Timedelta(days=7)).cumsum()
+            
+            period_labels = {}
+            for group, group_df in df_temp.groupby('Period_Group'):
+                start_date = group_df[TIMESTAMP_COL].min().strftime('%b %d, %Y')
+                end_date = group_df[TIMESTAMP_COL].max().strftime('%b %d, %Y')
+                label = f"Period {group + 1}: {start_date} - {end_date}"
+                period_labels[group] = label
+            periods_list = list(period_labels.values())
+        else:
+            periods_list = ["All Data"]
+
+        # Ensure selected_periods is a list of strings
+        if isinstance(selected_periods, str):
+            selected_periods = [selected_periods]
+        elif not selected_periods:
+            selected_periods = list(periods_list)
 
         qualitative_col_name = None
         try:
@@ -1444,23 +1596,27 @@ if __name__ == "__main__":
             reports_root = os.path.join(os.getcwd(), "reports")
             os.makedirs(reports_root, exist_ok=True)
             
+            period_slug = get_period_slug(selected_periods, periods_list)
+            
             if analysis_mode == "longitudinal":
-                run_dir = os.path.join(reports_root, "longitudinal")
+                if period_slug == "all_data":
+                    run_dir = os.path.join(reports_root, "longitudinal")
+                else:
+                    run_dir = os.path.join(reports_root, f"longitudinal_{period_slug}")
             else:
-                period_slug = clean_filename(selected_period).lower() if selected_period else "all_data"
                 run_dir = os.path.join(reports_root, period_slug)
                 
             os.makedirs(run_dir, exist_ok=True)
             png_dir = os.path.join(run_dir, "pngs")
             os.makedirs(png_dir, exist_ok=True)
 
+            # Filter the dataset to only include selected survey periods
+            df = df[df['Survey_Period'].isin(selected_periods)].copy()
+            print(f"Filtering dataset to {len(selected_periods)} selected survey periods...")
+
             if analysis_mode == "longitudinal":
                 create_longitudinal_reports(df, unique_classes, run_dir, png_dir)
             else:
-                if selected_period and selected_period != "All Data":
-                    df = df[df['Survey_Period'] == selected_period]
-                    print(f"\nFiltering data for {selected_period}...")
-
                 print(f"Found {len(unique_classes)} classes to analyze.")
                 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -1484,6 +1640,12 @@ if __name__ == "__main__":
                     create_consolidated_report(df, unique_classes, qualitative_col_name, run_dir)
                 else:
                     print("\nSkipping consolidated report because no qualitative feedback column was found.")
+
+            # Create master explanatory guide
+            has_consolidated = bool(qualitative_col_name)
+            create_master_reference_guide(run_dir, is_longitudinal=(analysis_mode == "longitudinal"), 
+                                         has_consolidated=has_consolidated, selected_periods=selected_periods)
+            print(f"  > Saved Master Explanatory Guide to {os.path.join(run_dir, 'Report_Reference_Guide.pdf')}")
 
             print("\nAnalysis complete. All requested plots and reports have been saved in this directory.")
 
