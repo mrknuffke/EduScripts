@@ -186,6 +186,8 @@ def launch_gui():
         else:
             selected_period.set("All Data")
             
+        root.withdraw()
+        root.update_idletasks()
         root.quit()
         
     # UI Layout
@@ -228,7 +230,10 @@ def launch_gui():
     root.mainloop()
     
     # After mainloop ends
-    root.destroy()
+    try:
+        root.destroy()
+    except Exception:
+        pass
     selected_courses_list = [c for c, var in course_vars.items() if var.get()]
     return data_df[0], analysis_mode.get(), selected_period.get(), selected_courses_list
 
@@ -1383,7 +1388,15 @@ def show_completion_popup(output_files, run_dir):
             else: subprocess.call(["xdg-open", file_path])
         tk.Button(btn_frame, text="Open PDF Report", font=("Arial", 12, "bold"), fg="#2e8b57", width=15, command=open_pdf).pack(side=tk.LEFT, padx=10)
 
-    tk.Button(btn_frame, text="OK", font=("Arial", 12, "bold"), width=10, command=popup.destroy).pack(side=tk.LEFT, padx=10)
+    def on_ok():
+        try:
+            popup.withdraw()
+            popup.update_idletasks()
+            popup.destroy()
+        except Exception:
+            pass
+
+    tk.Button(btn_frame, text="OK", font=("Arial", 12, "bold"), width=10, command=on_ok).pack(side=tk.LEFT, padx=10)
     popup.mainloop()
 
 if __name__ == "__main__":
