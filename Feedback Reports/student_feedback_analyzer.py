@@ -292,6 +292,26 @@ def setup_tufte_axes(ax, ygrid=True):
     else:
         ax.grid(False)
 
+def add_chart_description(fig, desc_text, rect=None):
+    if not desc_text:
+        plt.tight_layout()
+        return
+    
+    # Wrap text cleanly
+    wrapped_desc = "\n".join(textwrap.wrap(desc_text, width=105))
+    num_lines = len(wrapped_desc.split('\n'))
+    
+    # Calculate appropriate bottom spacing based on lines of text
+    bottom_space = 0.05 + (num_lines * 0.024)
+    
+    if rect is None:
+        rect = [0, bottom_space, 1, 0.96]
+        
+    plt.tight_layout(rect=rect)
+    
+    # Draw the description text at the very bottom of the figure canvas
+    fig.text(0.05, 0.015, wrapped_desc, fontsize=8.5, color='#555555', style='italic', ha='left', va='bottom', wrap=True)
+
 def create_reference_page(pdf, is_longitudinal):
     import textwrap
     fig, ax = plt.subplots(figsize=(8.5, 11))
@@ -534,7 +554,7 @@ def create_score_trends_chart(class_df, course, period_order, label_map, pdf, pn
     ax.set_ylabel("Score (1-7)", fontsize=11, color='#555555', labelpad=10)
     
     ax.legend(frameon=False, loc='upper right', bbox_to_anchor=(1, 1.05), ncol=2, fontsize=10, labelcolor='#444444')
-    plt.tight_layout()
+    add_chart_description(fig, "Tracks the average class rating (green, solid) compared to the overall school rating (orange, dashed) across all survey periods. Helps see if class-specific trends are moving in tandem with general school satisfaction.")
 
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
@@ -577,7 +597,7 @@ def create_sentiment_evolution_chart(class_df, course, period_order, label_map, 
     plt.xticks(rotation=0, ha='center', fontsize=10, color='#333333')
     
     ax.legend(title='', bbox_to_anchor=(1.02, 1), loc='upper left', frameon=False, labelcolor='#444444')
-    plt.tight_layout()
+    add_chart_description(fig, "A stacked bar chart showing the composition of student sentiment (Positive: green, Neutral: gray, Negative: red, Other: light gray) for each period. Useful to see if the overall class vibe is shifting over time.")
 
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
@@ -623,7 +643,7 @@ def create_small_multiples_score_trends(df, classes, period_order, label_map, pd
 
     fig.suptitle("In-Class Score Trends by Course", fontsize=14, y=1.02, color='#222222')
     fig.text(-0.02, 0.5, 'Average Score (1-7)', va='center', rotation='vertical', fontsize=11, color='#555555')
-    plt.tight_layout()
+    add_chart_description(fig, "Displays a grid of individual course ratings over time (green line) overlaid on top of the average across all combined classes (gray line). Allows easy, side-by-side identification of specific courses that are outperforming or underperforming the department average.", rect=[0.05, 0.08, 0.95, 0.95])
 
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
@@ -670,7 +690,7 @@ def create_feeling_words_heatmap(class_df, course, period_order, label_map, pdf,
     ax.set_title(f"Feeling-Word Frequency: {course}", fontsize=14, pad=20, color='#222222', loc='left')
     ax.set_xlabel(None)
     ax.set_ylabel(None)
-    plt.tight_layout()
+    add_chart_description(fig, "Maps the frequency of the top 15 feeling words chosen by students over time. Rows are sorted and colored by sentiment. Darker colors indicate higher frequency. Quickly highlights shifting emotional themes in the class.")
 
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
@@ -752,7 +772,7 @@ def create_sentiment_slopegraph(df, classes, period_order, label_map, pdf, png_p
     ax.set_xticklabels([label_map.get(first_period, first_period), label_map.get(last_period, last_period)],
                        fontsize=11, fontweight='bold', color='#333333')
     ax.set_title("Shift in Positive Sentiment: First vs Last Period", fontsize=14, pad=20, color='#222222', loc='left')
-    plt.tight_layout()
+    add_chart_description(fig, "A slopegraph linking the percentage of positive student sentiment in the first survey period to the last survey period. Improved sentiment is drawn in green, while declining sentiment is drawn in red. Provides a high-level view of class sentiment trajectory.", rect=[-0.05, 0.08, 1.05, 0.95])
 
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
@@ -826,7 +846,7 @@ def create_score_distribution_by_period(class_df, course, period_order, label_ma
     ax.set_title(f"Score Distributions Over Time: {course}", fontsize=14, pad=20, color='#222222', loc='left')
     ax.set_ylabel("Score (1–7)", fontsize=11, color='#555555')
     ax.set_xlabel(None)
-    plt.tight_layout()
+    add_chart_description(fig, "Uses violin density curves to show the full distribution of scores for this class (blue) and school (orange) over time. Box-and-whisker overlays are removed for maximum legibility, and dashed lines represent the mean score in each period. Reveals skewness, bimodality, and detailed score shifts that simple means might hide.", rect=[0, 0.12, 0.92, 0.95])
 
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
@@ -857,7 +877,7 @@ def create_response_volume_bar(df, period_order, label_map, pdf, png_path=None):
     ax.set_xticklabels(short_labels, rotation=0, ha='center', fontsize=10, color='#333333')
     ax.set_title("Responses Collected per Period", fontsize=14, pad=15, color='#222222', loc='left')
     ax.set_ylabel(None)
-    plt.tight_layout()
+    add_chart_description(fig, "Displays the count of survey responses in each survey period. Provides crucial sample-size context to determine if trends are driven by a representative number of students.")
 
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
@@ -1296,7 +1316,7 @@ def create_feelings_histogram(df, course_name, pdf=None, png_path=None):
     if legend_patches:
         ax.legend(legend_patches, legend_labels, frameon=False, loc='upper right', bbox_to_anchor=(1.02, 1))
 
-    plt.tight_layout()
+    add_chart_description(fig, "This categorical bar chart shows the count of students choosing specific feeling words to describe their experience. Bars are grouped and color-coded by sentiment: Positive (green), Neutral (gray), Negative (red), and Other (light gray). Helps gauge the emotional tone of the class.", rect=[0, 0.12, 0.95, 0.95])
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
     if pdf:
@@ -1351,7 +1371,7 @@ def create_comparative_bubble_chart(df, course_name, pdf=None, png_path=None):
     ax.set_xlabel(None)
     ax.set_ylim(0.5, 7.5)
 
-    plt.tight_layout()
+    add_chart_description(fig, "Compares student ratings of this class against their overall rating of school on a scale of 1 to 7. Each bubble represents a score level; its size corresponds to the number of students who gave that score (labels show the exact count). Muted horizontal dashed lines show the median score for each group. Allows quick comparison of class satisfaction against general school-wide feelings.")
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
     if pdf:
@@ -1404,7 +1424,7 @@ def create_sentiment_score_boxplot(df, course_name, pdf=None, png_path=None):
     ax.set_ylim(0.5, 7.5)
     ax.set_yticks(range(1, 8))
     
-    plt.tight_layout()
+    add_chart_description(fig, "Displays the distribution of class scores (1-7) grouped by student sentiment (Positive, Neutral, Negative). The boxes show the interquartile range (IQR) and medians, while overlaid bubbles show the individual student counts at each score. Reveals if students with specific sentiments (e.g. Negative) are also giving lower ratings.")
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
     if pdf:
@@ -1457,7 +1477,7 @@ def create_score_correlation_plot(df, course_name, pdf=None, png_path=None):
     ax.set_yticks(range(1, 8))
     ax.legend(frameon=False, loc='upper left')
     
-    plt.tight_layout()
+    add_chart_description(fig, "A 2D scatter plot mapping individual student class ratings (y-axis) against their school ratings (x-axis). Bubble sizes represent the count of students at that coordinate. The red dashed line shows the linear trend, and the Pearson correlation coefficient 'r' measures the strength of the relationship. Tells you if a student's class rating is strongly tied to their general outlook, or if the class experience is independent.")
     if png_path:
         fig.savefig(png_path, dpi=300, bbox_inches='tight')
     if pdf:
@@ -1531,12 +1551,16 @@ def show_completion_popup(output_files, run_dir, root=None):
         try:
             popup.withdraw()
             popup.update_idletasks()
-            popup.destroy()
+            popup.quit()
         except Exception:
             pass
 
     tk.Button(btn_frame, text="OK", font=("Arial", 12, "bold"), width=10, command=on_ok).pack(side=tk.LEFT, padx=10)
     popup.mainloop()
+    try:
+        popup.destroy()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     import os
