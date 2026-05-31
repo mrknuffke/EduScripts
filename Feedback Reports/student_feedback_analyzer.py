@@ -230,12 +230,13 @@ def launch_gui():
     root.mainloop()
     
     # After mainloop ends
+    selected_courses_list = []
     try:
-        root.destroy()
+        selected_courses_list = [c for c, var in course_vars.items() if var.get()]
     except Exception:
         pass
-    selected_courses_list = [c for c, var in course_vars.items() if var.get()]
-    return data_df[0], analysis_mode.get(), selected_period.get(), selected_courses_list
+    # Do NOT destroy root here so it can be reused for the completion popup.
+    return data_df[0], analysis_mode.get(), selected_period.get(), selected_courses_list, root
 
 def build_period_date_labels(df):
     """Build a map from Survey_Period -> short date-range label (e.g., 'Oct 3-7' or 'Oct 3')."""
@@ -1335,12 +1336,22 @@ def create_score_correlation_plot(df, course_name, pdf=None, png_path=None):
         pdf.savefig(fig)
     plt.close(fig)
 
-def show_completion_popup(output_files, run_dir):
+def show_completion_popup(output_files, run_dir, root=None):
     """Modal popup shown when analysis finishes. User clicks OK to exit."""
     import os
     import sys
     import subprocess
-    popup = tk.Tk()
+    if root is not None:
+        try:
+            # Clear all existing widgets from the root window
+            for widget in root.winfo_children():
+                widget.destroy()
+            popup = root
+            popup.deiconify()  # Show the root window again!
+        except Exception:
+            popup = tk.Tk()
+    else:
+        popup = tk.Tk()
     popup.title("Analysis Complete")
     popup.geometry("650x500")
 
@@ -1403,10 +1414,14 @@ if __name__ == "__main__":
     import os
     import time
     result = launch_gui()
-    if len(result) == 4:
+    if isinstance(result, tuple) and len(result) == 5:
+        df, analysis_mode, selected_period, selected_courses, root = result
+    elif isinstance(result, tuple) and len(result) == 4:
         df, analysis_mode, selected_period, selected_courses = result
+        root = None
     else:
         df = None
+        root = None
 
     if df is not None:
         print(f"\nProcessing loaded dataset...")
@@ -1473,13 +1488,13 @@ if __name__ == "__main__":
             print("\nAnalysis complete. All requested plots and reports have been saved in this directory.")
 
             output_files = []
-            for root, dirs, files in os.walk(run_dir):
+            for dirpath, dirs, files in os.walk(run_dir):
                 for fname in files:
-                    fpath = os.path.join(root, fname)
+                    fpath = os.path.join(dirpath, fname)
                     if fname.lower().endswith(('.pdf', '.png')):
                         if os.path.getmtime(fpath) >= run_start:
                             output_files.append(fpath)
 
-            show_completion_popup(output_files, run_dir)
+            show_completion_popup(output_files, run_dir, root=root)
     else:
         print("\nScript manually closed or no file was processed.")
