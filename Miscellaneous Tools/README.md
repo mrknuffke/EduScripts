@@ -8,6 +8,7 @@ A dedicated folder for standalone utility scripts, single-purpose automation hel
 
 | Script File | Type | Description | Requirements / Setup |
 | :--- | :--- | :--- | :--- |
+| [**`DocFontTools.gs`**](file:///Users/davidknuffke/Documents/Programming/EduScripts/Miscellaneous%20Tools/DocFontTools.gs) | Apps Script | Google Docs utility script that adds a custom **Font Tools** menu. Features **Highlight Non-Brand Fonts** (scans document text attribute runs and highlights non-brand fonts in yellow) and **Generate Font Report** (creates a new Google Sheet report in Google Drive root auditing all text snippets, font families, sizes, and styling). | Open Google Doc → Extensions → Apps Script → Paste code. |
 | [**`DocStandardizer.gs`**](file:///Users/davidknuffke/Documents/Programming/EduScripts/Miscellaneous%20Tools/DocStandardizer.gs) | Apps Script | Standalone batch tool to standardize formatting across Google Docs (batch folder or single doc). Converts straight to smart quotes, fixes Unicode subscripts/superscripts to native formatting, promotes "✎Note Space N:" paragraphs to Heading 1, cleans table row heights & in-cell paragraph spacing, clears paragraph bottom borders, and applies Garamond/Montserrat typography while preserving custom author text colors. | Requires **Google Docs API** Advanced Service:<br>Apps Script Editor → Services (`+`) → Google Docs API → Add. |
 
 ---
@@ -17,7 +18,7 @@ A dedicated folder for standalone utility scripts, single-purpose automation hel
 When adding new scripts into this directory, please adhere to the following best practices:
 
 ### 1. File Naming Conventions
-- **Google Apps Scripts**: Use CamelCase or descriptive names with the `.gs` extension (e.g. `DocStandardizer.gs`, `RosterParser.gs`).
+- **Google Apps Scripts**: Use CamelCase or descriptive names with the `.gs` extension (e.g. `DocFontTools.gs`, `DocStandardizer.gs`).
 - **Python Utilities**: Use lowercase snake_case with the `.py` extension (e.g. `csv_cleaner.py`, `seating_chart_exporter.py`).
 - **Shell Scripts**: Use lowercase with the `.sh` extension (e.g. `backup_reports.sh`).
 
