@@ -1,3 +1,20 @@
+# System & Editor Files
 .DS_Store
+.claude/
+.ipynb_checkpoints/
+
+# Python Caches & Virtual Environments
+__pycache__/
+*.pyc
+
+# Sensitive Student Data CSVs
+*.csv
+
+# Generated Output Media & Reports
+*.pdf
+*.png
+*.svg
+
+# Archives & Internal Planning Docs
 MasterScheduler_ARCHIVED/
 SCRIPT_IDEAS.md
