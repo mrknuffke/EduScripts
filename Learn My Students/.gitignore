@@ -1,0 +1,14 @@
+# OS / editor / build cruft
+.DS_Store
+__pycache__/
+*.pyc
+
+# Student data — NEVER commit or share (contains names & photos of minors)
+Rosters/
+*.deck.json
+photos/
+
+# PowerSchool roster exports are PDFs of student photos — ignore all PDFs,
+# but keep the shareable, data-free README.pdf.
+*.pdf
+!README.pdf

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Learn My Students">
+  <meta name="theme-color" content="#121824">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>">
+  <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Learn%20My%20Students%22%2C%22short_name%22%3A%22LearnStudents%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23121824%22%2C%22theme_color%22%3A%22%23121824%22%7D">
+  <title>Learn My Students</title>
+  <style>
+    /* APP_CSS */
+  </style>
+</head>
+<body class="screen-home">
+
+  <!-- Header / Navigation -->
+  <header class="app-header">
+    <div class="header-content">
+      <h1 class="logo">Learn My Students</h1>
+      <div class="header-actions">
+        <button id="btn-theme-toggle" class="theme-toggle-btn" title="Toggle between Light Mode and Dark Mode">☀️ Light Mode</button>
+        <div id="unsaved-badge" class="badge warning hidden">Unsaved Changes</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <!-- Screen 1: Home -->
+    <section id="screen-home" class="screen">
+      <div class="card getting-started-card">
+        <div class="getting-started-header">
+          <span class="getting-started-icon">🚀</span>
+          <h3>How to Get Started (3 Easy Steps)</h3>
+        </div>
+        <div class="quick-steps-grid">
+          <div class="quick-step-item">
+            <div class="step-badge">1</div>
+            <div class="step-details">
+              <strong>Export Roster PDF</strong>
+              <p>In PowerSchool, select <em>Photos: 12/page</em> report and save as a <code>.pdf</code> file.</p>
+            </div>
+          </div>
+          <div class="quick-step-item">
+            <div class="step-badge">2</div>
+            <div class="step-details">
+              <strong>Drop File Below</strong>
+              <p>Drag your <code>.pdf</code> or saved <code>.deck.json</code> into the drop zone below or click Browse.</p>
+            </div>
+          </div>
+          <div class="quick-step-item">
+            <div class="step-badge">3</div>
+            <div class="step-details">
+              <strong>Study &amp; Save</strong>
+              <p>Drill flashcards or view Class Grid. Click Save to keep progress in a <code>.deck.json</code> file.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card drop-zone-card">
+        <div id="drop-zone" class="drop-zone">
+          <div class="drop-zone-icon">📁</div>
+          <h2>Drop your PowerSchool PDF or Deck File here</h2>
+          <p>Supports <code>.pdf</code> photo roster exports &amp; <code>.deck.json</code> saved decks</p>
+          <div class="file-picker-wrapper">
+            <button id="btn-browse" class="btn primary">Browse Files</button>
+            <input type="file" id="file-input" accept=".pdf,.deck.json" multiple hidden>
+          </div>
+        </div>
+      </div>
+
+      <div class="card deck-file-info-card">
+        <div class="info-header">
+          <span class="info-icon">💡</span>
+          <h3>What is a Deck File (.deck.json)?</h3>
+        </div>
+        <p class="info-text">
+          A <strong>Deck File</strong> is a self-contained, portable file containing your class roster's extracted photos, student names, and your current memorization box progress.
+        </p>
+        <div class="info-grid">
+          <div class="info-item">
+            <strong>💾 Save &amp; Back Up Progress</strong>
+            <span>Save your deck after studying to preserve Leitner box progress across sessions or computers.</span>
+          </div>
+          <div class="info-item">
+            <strong>🤝 Easy Roster Sharing</strong>
+            <span>Share a <code>.deck.json</code> file with co-teachers, substitutes, or TAs so they can study the photos &amp; names without needing raw PDFs or setup!</span>
+          </div>
+          <div class="info-item">
+            <strong>⚡ Instant Drag &amp; Drop</strong>
+            <span>Drop a saved <code>.deck.json</code> file back into the app anytime to pick up right where you left off.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card deck-list-card">
+        <div class="deck-list-header">
+          <h2>Loaded Decks</h2>
+          <button id="btn-study-combined" class="btn secondary" disabled>Study Selected Combined</button>
+        </div>
+        <div id="deck-list" class="deck-list">
+          <div class="empty-state">No decks loaded yet. Drop a PDF or deck file above to get started!</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screen 2: Import Confirmation -->
+    <section id="screen-import" class="screen">
+      <div class="card">
+        <div class="import-header">
+          <h2>Confirm Deck Import</h2>
+          <div class="deck-name-input-group">
+            <label for="import-deck-name">Deck Name:</label>
+            <input type="text" id="import-deck-name" class="input-text">
+          </div>
+        </div>
+
+        <div id="import-stats-summary" class="import-stats-summary"></div>
+        <div id="import-warnings" class="import-warnings hidden"></div>
+
+        <div id="import-grid" class="import-grid"></div>
+
+        <div class="import-actions">
+          <button id="btn-confirm-import" class="btn primary">Confirm & Save to Memory</button>
+          <button id="btn-cancel-import" class="btn danger">Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screen 3: Study -->
+    <section id="screen-study" class="screen">
+      <div class="study-container">
+        <div class="study-top-bar">
+          <button id="btn-exit-study" class="btn text-btn">← Exit Session (Esc)</button>
+          <div class="study-deck-title" id="study-deck-title">Deck Title</div>
+          <button id="btn-study-view-grid" class="btn secondary sm">View Class Grid</button>
+          <div class="study-counters">
+            <span class="counter-item correct">✓ <span id="study-count-correct">0</span></span>
+            <span class="counter-item partial">~ <span id="study-count-partial">0</span></span>
+            <span class="counter-item missed">✗ <span id="study-count-missed">0</span></span>
+          </div>
+        </div>
+
+        <div class="study-progress-bar-container">
+          <div id="study-progress-bar" class="study-progress-bar"></div>
+        </div>
+
+        <div class="study-card">
+          <div class="photo-container" id="study-photo-container" title="Click photo to reveal name (recorded as miss)">
+            <img id="study-photo" src="" alt="Student photo">
+            <div class="photo-click-hint">Click image to reveal name</div>
+          </div>
+
+          <div class="study-feedback-area" id="study-feedback-area"></div>
+
+          <form id="study-form" class="study-form" autocomplete="off">
+            <datalist id="deck-student-names"></datalist>
+            <input type="text" id="study-input" class="study-input" placeholder="Type or select student's name..." list="deck-student-names" autofocus>
+            <button type="submit" id="btn-submit-answer" class="btn primary">Submit</button>
+            <button type="button" id="btn-reveal-answer" class="btn secondary">I Don't Know (Space)</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screen 4: Class Roster Grid -->
+    <section id="screen-grid" class="screen">
+      <div class="card grid-screen-card">
+        <div class="grid-header">
+          <button id="btn-exit-grid" class="btn text-btn">← Back to Home (Esc)</button>
+          <h2 id="grid-deck-title">Class Roster Grid</h2>
+          <div class="grid-controls">
+            <button id="btn-grid-toggle-study" class="btn primary sm hidden">Resume Study</button>
+            <button id="btn-toggle-all-names" class="btn secondary">Hide All Names</button>
+          </div>
+        </div>
+        <div class="grid-subtitle">
+          View all students in this class at once. Click any card to reveal or hide their name.
+        </div>
+        <div id="class-grid-container" class="class-grid-container"></div>
+      </div>
+    </section>
+
+    <!-- Screen 5: Session Summary -->
+    <section id="screen-summary" class="screen">
+      <canvas id="summary-confetti-canvas"></canvas>
+      <div class="card summary-card">
+        <h2>Session Complete!</h2>
+
+        <div id="summary-performance-banner" class="summary-performance-banner"></div>
+
+        <div class="sound-toggle-wrapper">
+          <button id="btn-sound-toggle" class="btn-sound-toggle" type="button">🔊 Sound On</button>
+        </div>
+
+        <div class="summary-stats-grid">
+          <div class="stat-box correct">
+            <div class="stat-number" id="sum-stat-correct">0</div>
+            <div class="stat-label">Correct</div>
+          </div>
+          <div class="stat-box partial">
+            <div class="stat-number" id="sum-stat-partial">0</div>
+            <div class="stat-label">Partial</div>
+          </div>
+          <div class="stat-box missed">
+            <div class="stat-number" id="sum-stat-missed">0</div>
+            <div class="stat-label">Missed</div>
+          </div>
+        </div>
+
+        <div class="summary-section">
+          <h3>Box Distribution Across Deck</h3>
+          <div id="box-distribution" class="box-distribution"></div>
+        </div>
+
+        <div class="summary-section" id="missed-cards-section">
+          <h3>Names Missed This Session</h3>
+          <div id="missed-cards-list" class="missed-cards-list"></div>
+        </div>
+
+        <div class="summary-actions">
+          <div>
+            <button id="btn-save-decks" class="btn success pulse">💾 Save Deck File(s)</button>
+            <p class="save-deck-hint">Saves photos &amp; memorization progress into shareable <code>.deck.json</code> files</p>
+          </div>
+          <button id="btn-restart-session" class="btn primary">Study Again (Same Session)</button>
+          <button id="btn-continue-studying" class="btn secondary">Return to Home</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <p>Local, zero-install flashcard tool for teachers. All data stays in your browser and local deck files.</p>
+    <p class="footer-credit">Built by <a class="footer-link" href="https://davidknuffke.com" target="_blank" rel="noopener">David Knuffke</a> and provided as-is, with no warranty or support. It's a single HTML file &mdash; open it, tinker with it, and make it your own.</p>
+    <p class="footer-credit">Licensed under <a class="footer-link" href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener">CC BY-NC-SA 4.0</a> &mdash; share and adapt for non-commercial use, with attribution, under the same terms.</p>
+    <p class="footer-version">Version 1.0 &middot; 2026-08-06</p>
+  </footer>
+
+  <script>
+    /* VENDOR_PDF_JS */
+  </script>
+  <script>
+    const PDF_WORKER_SRC = '/* VENDOR_PDF_WORKER_JS */';
+  </script>
+  <script>
+    /* APP_JS */
+  </script>
+</body>
+</html>
