@@ -100,7 +100,10 @@
       <div class="card deck-list-card">
         <div class="deck-list-header">
           <h2>Loaded Decks</h2>
-          <button id="btn-study-combined" class="btn secondary" disabled>Study Selected Combined</button>
+          <div class="deck-header-actions">
+            <button id="btn-export-collective-home" class="btn secondary" disabled title="Export all loaded classes into a single collective .deck.json file">📦 Export Collective (.json)</button>
+            <button id="btn-study-combined" class="btn secondary" disabled>Study Selected Combined</button>
+          </div>
         </div>
         <div id="deck-list" class="deck-list">
           <div class="empty-state">No decks loaded yet. Drop a PDF or deck file above to get started!</div>
@@ -223,9 +226,12 @@
         </div>
 
         <div class="summary-actions">
-          <div>
-            <button id="btn-save-decks" class="btn success pulse">💾 Save Deck File(s)</button>
-            <p class="save-deck-hint">Saves photos &amp; memorization progress into shareable <code>.deck.json</code> files</p>
+          <div class="save-buttons-group">
+            <div class="save-buttons-row">
+              <button id="btn-save-collective" class="btn success pulse">📦 Save Collective (.json)</button>
+              <button id="btn-save-decks" class="btn secondary">💾 Save Individual Files</button>
+            </div>
+            <p class="save-deck-hint">Save all classes into one collective <code>.deck.json</code> file or separate files</p>
           </div>
           <button id="btn-restart-session" class="btn primary">Study Again (Same Session)</button>
           <button id="btn-continue-studying" class="btn secondary">Return to Home</button>

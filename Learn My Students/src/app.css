@@ -743,12 +743,35 @@ body.screen-summary #screen-summary { display: block; }
   gap: 1rem;
   margin-top: 2rem;
   align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.save-buttons-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.save-buttons-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.deck-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .save-deck-hint {
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-top: 0.4rem;
+  text-align: center;
 }
 
 /* Getting Started Card */

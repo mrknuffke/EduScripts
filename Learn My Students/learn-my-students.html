@@ -756,12 +756,35 @@ body.screen-summary #screen-summary { display: block; }
   gap: 1rem;
   margin-top: 2rem;
   align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.save-buttons-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.save-buttons-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.deck-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .save-deck-hint {
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-top: 0.4rem;
+  text-align: center;
 }
 
 /* Getting Started Card */
@@ -1278,7 +1301,10 @@ body.screen-summary #screen-summary { display: block; }
       <div class="card deck-list-card">
         <div class="deck-list-header">
           <h2>Loaded Decks</h2>
-          <button id="btn-study-combined" class="btn secondary" disabled>Study Selected Combined</button>
+          <div class="deck-header-actions">
+            <button id="btn-export-collective-home" class="btn secondary" disabled title="Export all loaded classes into a single collective .deck.json file">📦 Export Collective (.json)</button>
+            <button id="btn-study-combined" class="btn secondary" disabled>Study Selected Combined</button>
+          </div>
         </div>
         <div id="deck-list" class="deck-list">
           <div class="empty-state">No decks loaded yet. Drop a PDF or deck file above to get started!</div>
@@ -1401,9 +1427,12 @@ body.screen-summary #screen-summary { display: block; }
         </div>
 
         <div class="summary-actions">
-          <div>
-            <button id="btn-save-decks" class="btn success pulse">💾 Save Deck File(s)</button>
-            <p class="save-deck-hint">Saves photos &amp; memorization progress into shareable <code>.deck.json</code> files</p>
+          <div class="save-buttons-group">
+            <div class="save-buttons-row">
+              <button id="btn-save-collective" class="btn success pulse">📦 Save Collective (.json)</button>
+              <button id="btn-save-decks" class="btn secondary">💾 Save Individual Files</button>
+            </div>
+            <p class="save-deck-hint">Save all classes into one collective <code>.deck.json</code> file or separate files</p>
           </div>
           <button id="btn-restart-session" class="btn primary">Study Again (Same Session)</button>
           <button id="btn-continue-studying" class="btn secondary">Return to Home</button>
@@ -1854,6 +1883,11 @@ body.screen-summary #screen-summary { display: block; }
     const listEl = document.getElementById('deck-list');
     listEl.innerHTML = '';
 
+    const exportCollectiveHomeBtn = document.getElementById('btn-export-collective-home');
+    if (exportCollectiveHomeBtn) {
+      exportCollectiveHomeBtn.disabled = loadedDecks.length === 0;
+    }
+
     if (loadedDecks.length === 0) {
       listEl.innerHTML = '<div class="empty-state">No decks loaded yet. Drop a PDF or deck file above to get started!</div>';
       document.getElementById('btn-study-combined').disabled = true;
@@ -1953,20 +1987,36 @@ body.screen-summary #screen-summary { display: block; }
 
   function updateStudentNameDatalist(decks) {
     const datalist = document.getElementById('deck-student-names');
-    if (!datalist || !decks) return;
+    if (!datalist) return;
     const names = new Set();
-    decks.forEach(d => {
-      if (d.cards) {
-        d.cards.forEach(c => {
-          if (c.name && c.name !== 'Unknown Student') {
-            names.add(c.name);
-          }
-          if (c.preferredName) {
-            names.add(c.preferredName);
-          }
-        });
-      }
-    });
+
+    if (activeSession && activeSession.queue && activeSession.currentIndex < activeSession.queue.length) {
+      // Filter out students who have already been dialed in (answered) in this session
+      const remainingItems = activeSession.queue.slice(activeSession.currentIndex);
+      remainingItems.forEach(item => {
+        const c = item.card;
+        if (c.name && c.name !== 'Unknown Student') {
+          names.add(c.name);
+        }
+        if (c.preferredName) {
+          names.add(c.preferredName);
+        }
+      });
+    } else if (decks) {
+      decks.forEach(d => {
+        if (d.cards) {
+          d.cards.forEach(c => {
+            if (c.name && c.name !== 'Unknown Student') {
+              names.add(c.name);
+            }
+            if (c.preferredName) {
+              names.add(c.preferredName);
+            }
+          });
+        }
+      });
+    }
+
     datalist.innerHTML = Array.from(names)
       .sort()
       .map(n => `<option value="${escapeHtml(n)}"></option>`)
@@ -2395,6 +2445,75 @@ body.screen-summary #screen-summary { display: block; }
       container.appendChild(cardEl);
     });
   }
+  async function exportCollectiveJSON(decksToExport, suggestedName) {
+    const targetDecks = decksToExport && decksToExport.length > 0 ? decksToExport : loadedDecks;
+    if (!targetDecks || targetDecks.length === 0) return;
+
+    const exportData = {
+      schema: 1,
+      isMultiDeck: true,
+      exportedAt: new Date().toISOString(),
+      decks: targetDecks.map(deck => ({
+        schema: 1,
+        deckName: deck.deckName,
+        createdAt: deck.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sessionCount: deck.sessionCount || 0,
+        cards: deck.cards.map(c => ({
+          id: c.id,
+          name: c.name,
+          preferredName: c.preferredName || null,
+          photo: c.photo,
+          box: c.box || 1,
+          dueSession: c.dueSession || 1,
+          seen: c.seen || 0,
+          correct: c.correct || 0,
+          missed: c.missed || 0
+        }))
+      }))
+    };
+
+    const jsonStr = JSON.stringify(exportData, null, 2);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const defaultFileName = suggestedName || (targetDecks.length === 1 
+      ? `${targetDecks[0].deckName.replace(/[^\w\s-]/g, '')}.deck.json` 
+      : `All_Classes_Collective_${dateStr}.deck.json`);
+
+    let savedViaAPI = false;
+    if ('showSaveFilePicker' in window) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: defaultFileName,
+          types: [{ description: 'Collective Deck JSON File', accept: { 'application/json': ['.json'] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(jsonStr);
+        await writable.close();
+        savedViaAPI = true;
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.warn('showSaveFilePicker failed or cancelled, falling back to download link:', err);
+        } else {
+          return;
+        }
+      }
+    }
+
+    if (!savedViaAPI) {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = defaultFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    setUnsaved(false);
+  }
+
   async function saveDecksToDisk() {
     if (loadedDecks.length === 0) return;
 
@@ -2468,18 +2587,32 @@ body.screen-summary #screen-summary { display: block; }
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const fileName = file.name;
-      if (fileName.toLowerCase().endsWith('.deck.json')) {
+      if (fileName.toLowerCase().endsWith('.deck.json') || fileName.toLowerCase().endsWith('.json')) {
         try {
           const text = await file.text();
-          const deckObj = JSON.parse(text);
-          if (deckObj.cards && Array.isArray(deckObj.cards)) {
-            const existingIdx = loadedDecks.findIndex(d => d.deckName === deckObj.deckName);
-            if (existingIdx >= 0) {
-              loadedDecks[existingIdx] = deckObj;
-            } else {
-              loadedDecks.push(deckObj);
-            }
-            jsonCount++;
+          const data = JSON.parse(text);
+          let decksToImport = [];
+
+          if (Array.isArray(data)) {
+            decksToImport = data.filter(d => d && d.cards && Array.isArray(d.cards));
+          } else if (data && data.decks && Array.isArray(data.decks)) {
+            decksToImport = data.decks.filter(d => d && d.cards && Array.isArray(d.cards));
+          } else if (data && data.cards && Array.isArray(data.cards)) {
+            decksToImport = [data];
+          }
+
+          if (decksToImport.length > 0) {
+            decksToImport.forEach(deckObj => {
+              const existingIdx = loadedDecks.findIndex(d => d.deckName === deckObj.deckName);
+              if (existingIdx >= 0) {
+                loadedDecks[existingIdx] = deckObj;
+              } else {
+                loadedDecks.push(deckObj);
+              }
+              jsonCount++;
+            });
+          } else {
+            alert(`No valid card decks found in ${fileName}.`);
           }
         } catch (err) {
           alert(`Failed to load ${fileName}: ` + err.message);
@@ -2766,6 +2899,21 @@ body.screen-summary #screen-summary { display: block; }
 
     // Summary screen actions
     document.getElementById('btn-save-decks').addEventListener('click', saveDecksToDisk);
+
+    const collectiveSummaryBtn = document.getElementById('btn-save-collective');
+    if (collectiveSummaryBtn) {
+      collectiveSummaryBtn.addEventListener('click', () => {
+        const decksToExport = activeSession && activeSession.decks ? activeSession.decks : loadedDecks;
+        exportCollectiveJSON(decksToExport);
+      });
+    }
+
+    const collectiveHomeBtn = document.getElementById('btn-export-collective-home');
+    if (collectiveHomeBtn) {
+      collectiveHomeBtn.addEventListener('click', () => {
+        exportCollectiveJSON(loadedDecks);
+      });
+    }
 
     const restartSessionBtn = document.getElementById('btn-restart-session');
     if (restartSessionBtn) {

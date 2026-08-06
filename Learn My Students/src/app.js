@@ -404,6 +404,11 @@
     const listEl = document.getElementById('deck-list');
     listEl.innerHTML = '';
 
+    const exportCollectiveHomeBtn = document.getElementById('btn-export-collective-home');
+    if (exportCollectiveHomeBtn) {
+      exportCollectiveHomeBtn.disabled = loadedDecks.length === 0;
+    }
+
     if (loadedDecks.length === 0) {
       listEl.innerHTML = '<div class="empty-state">No decks loaded yet. Drop a PDF or deck file above to get started!</div>';
       document.getElementById('btn-study-combined').disabled = true;
@@ -503,20 +508,36 @@
 
   function updateStudentNameDatalist(decks) {
     const datalist = document.getElementById('deck-student-names');
-    if (!datalist || !decks) return;
+    if (!datalist) return;
     const names = new Set();
-    decks.forEach(d => {
-      if (d.cards) {
-        d.cards.forEach(c => {
-          if (c.name && c.name !== 'Unknown Student') {
-            names.add(c.name);
-          }
-          if (c.preferredName) {
-            names.add(c.preferredName);
-          }
-        });
-      }
-    });
+
+    if (activeSession && activeSession.queue && activeSession.currentIndex < activeSession.queue.length) {
+      // Filter out students who have already been dialed in (answered) in this session
+      const remainingItems = activeSession.queue.slice(activeSession.currentIndex);
+      remainingItems.forEach(item => {
+        const c = item.card;
+        if (c.name && c.name !== 'Unknown Student') {
+          names.add(c.name);
+        }
+        if (c.preferredName) {
+          names.add(c.preferredName);
+        }
+      });
+    } else if (decks) {
+      decks.forEach(d => {
+        if (d.cards) {
+          d.cards.forEach(c => {
+            if (c.name && c.name !== 'Unknown Student') {
+              names.add(c.name);
+            }
+            if (c.preferredName) {
+              names.add(c.preferredName);
+            }
+          });
+        }
+      });
+    }
+
     datalist.innerHTML = Array.from(names)
       .sort()
       .map(n => `<option value="${escapeHtml(n)}"></option>`)
@@ -945,6 +966,75 @@
       container.appendChild(cardEl);
     });
   }
+  async function exportCollectiveJSON(decksToExport, suggestedName) {
+    const targetDecks = decksToExport && decksToExport.length > 0 ? decksToExport : loadedDecks;
+    if (!targetDecks || targetDecks.length === 0) return;
+
+    const exportData = {
+      schema: 1,
+      isMultiDeck: true,
+      exportedAt: new Date().toISOString(),
+      decks: targetDecks.map(deck => ({
+        schema: 1,
+        deckName: deck.deckName,
+        createdAt: deck.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sessionCount: deck.sessionCount || 0,
+        cards: deck.cards.map(c => ({
+          id: c.id,
+          name: c.name,
+          preferredName: c.preferredName || null,
+          photo: c.photo,
+          box: c.box || 1,
+          dueSession: c.dueSession || 1,
+          seen: c.seen || 0,
+          correct: c.correct || 0,
+          missed: c.missed || 0
+        }))
+      }))
+    };
+
+    const jsonStr = JSON.stringify(exportData, null, 2);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const defaultFileName = suggestedName || (targetDecks.length === 1 
+      ? `${targetDecks[0].deckName.replace(/[^\w\s-]/g, '')}.deck.json` 
+      : `All_Classes_Collective_${dateStr}.deck.json`);
+
+    let savedViaAPI = false;
+    if ('showSaveFilePicker' in window) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: defaultFileName,
+          types: [{ description: 'Collective Deck JSON File', accept: { 'application/json': ['.json'] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(jsonStr);
+        await writable.close();
+        savedViaAPI = true;
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.warn('showSaveFilePicker failed or cancelled, falling back to download link:', err);
+        } else {
+          return;
+        }
+      }
+    }
+
+    if (!savedViaAPI) {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = defaultFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    setUnsaved(false);
+  }
+
   async function saveDecksToDisk() {
     if (loadedDecks.length === 0) return;
 
@@ -1018,18 +1108,32 @@
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const fileName = file.name;
-      if (fileName.toLowerCase().endsWith('.deck.json')) {
+      if (fileName.toLowerCase().endsWith('.deck.json') || fileName.toLowerCase().endsWith('.json')) {
         try {
           const text = await file.text();
-          const deckObj = JSON.parse(text);
-          if (deckObj.cards && Array.isArray(deckObj.cards)) {
-            const existingIdx = loadedDecks.findIndex(d => d.deckName === deckObj.deckName);
-            if (existingIdx >= 0) {
-              loadedDecks[existingIdx] = deckObj;
-            } else {
-              loadedDecks.push(deckObj);
-            }
-            jsonCount++;
+          const data = JSON.parse(text);
+          let decksToImport = [];
+
+          if (Array.isArray(data)) {
+            decksToImport = data.filter(d => d && d.cards && Array.isArray(d.cards));
+          } else if (data && data.decks && Array.isArray(data.decks)) {
+            decksToImport = data.decks.filter(d => d && d.cards && Array.isArray(d.cards));
+          } else if (data && data.cards && Array.isArray(data.cards)) {
+            decksToImport = [data];
+          }
+
+          if (decksToImport.length > 0) {
+            decksToImport.forEach(deckObj => {
+              const existingIdx = loadedDecks.findIndex(d => d.deckName === deckObj.deckName);
+              if (existingIdx >= 0) {
+                loadedDecks[existingIdx] = deckObj;
+              } else {
+                loadedDecks.push(deckObj);
+              }
+              jsonCount++;
+            });
+          } else {
+            alert(`No valid card decks found in ${fileName}.`);
           }
         } catch (err) {
           alert(`Failed to load ${fileName}: ` + err.message);
@@ -1316,6 +1420,21 @@
 
     // Summary screen actions
     document.getElementById('btn-save-decks').addEventListener('click', saveDecksToDisk);
+
+    const collectiveSummaryBtn = document.getElementById('btn-save-collective');
+    if (collectiveSummaryBtn) {
+      collectiveSummaryBtn.addEventListener('click', () => {
+        const decksToExport = activeSession && activeSession.decks ? activeSession.decks : loadedDecks;
+        exportCollectiveJSON(decksToExport);
+      });
+    }
+
+    const collectiveHomeBtn = document.getElementById('btn-export-collective-home');
+    if (collectiveHomeBtn) {
+      collectiveHomeBtn.addEventListener('click', () => {
+        exportCollectiveJSON(loadedDecks);
+      });
+    }
 
     const restartSessionBtn = document.getElementById('btn-restart-session');
     if (restartSessionBtn) {
