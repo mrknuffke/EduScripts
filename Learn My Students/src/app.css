@@ -487,6 +487,19 @@ body.screen-summary #screen-summary { display: block; }
   line-height: 1.2;
 }
 
+.import-card-pref-wrapper {
+  margin-top: 0.35rem;
+  width: 100%;
+}
+
+.import-preferred-input {
+  width: 100%;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.35rem;
+  text-align: center;
+  border-radius: var(--radius-sm);
+}
+
 .import-card-status {
   font-size: 0.7rem;
   color: var(--color-warning);
@@ -999,34 +1012,118 @@ body.screen-summary #screen-summary { display: block; }
   border: 1px solid var(--border-color);
 }
 
+.grid-student-name-wrapper {
+  position: relative;
+  width: 100%;
+  min-height: 3em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 1.2rem 0.2rem 0.2rem;
+  word-break: break-word;
+  line-height: 1.2;
+}
+
 .grid-student-name {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-main);
-  min-height: 2.5em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  word-break: break-word;
-  line-height: 1.2;
-  width: 100%;
-  padding: 0.2rem;
   transition: all 0.2s ease;
 }
 
-.grid-student-name.hidden-name {
+.grid-student-pref-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--accent-primary);
+  margin-top: 0.15rem;
+}
+
+.grid-edit-pencil {
+  position: absolute;
+  top: 50%;
+  right: -2px;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  padding: 2px 4px;
+}
+
+.grid-student-card:hover .grid-edit-pencil {
+  opacity: 1;
+}
+
+.grid-edit-pencil:hover {
+  transform: translateY(-50%) scale(1.25);
+}
+
+.grid-student-name-wrapper.hidden-name {
   background-color: rgba(51, 65, 85, 0.6);
   color: transparent;
   border-radius: var(--radius-sm);
   position: relative;
+  padding-right: 0.2rem;
 }
 
-.grid-student-name.hidden-name::after {
+.grid-student-name-wrapper.hidden-name .grid-student-name,
+.grid-student-name-wrapper.hidden-name .grid-student-pref-name,
+.grid-student-name-wrapper.hidden-name .grid-edit-pencil {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.grid-student-name-wrapper.hidden-name::after {
   content: "Click to reveal";
   color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
   position: absolute;
+}
+
+.grid-student-card.editing {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.grid-student-edit-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.2rem;
+}
+
+.grid-edit-roster-name {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.grid-pref-input {
+  width: 100%;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.35rem;
+  text-align: center;
+}
+
+.grid-edit-btn-row {
+  display: flex;
+  gap: 0.3rem;
+  width: 100%;
+  justify-content: center;
+}
+
+.grid-edit-btn-row .btn {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.7rem;
 }
 
 .grid-box-tag {

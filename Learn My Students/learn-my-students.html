@@ -500,6 +500,19 @@ body.screen-summary #screen-summary { display: block; }
   line-height: 1.2;
 }
 
+.import-card-pref-wrapper {
+  margin-top: 0.35rem;
+  width: 100%;
+}
+
+.import-preferred-input {
+  width: 100%;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.35rem;
+  text-align: center;
+  border-radius: var(--radius-sm);
+}
+
 .import-card-status {
   font-size: 0.7rem;
   color: var(--color-warning);
@@ -1012,34 +1025,118 @@ body.screen-summary #screen-summary { display: block; }
   border: 1px solid var(--border-color);
 }
 
+.grid-student-name-wrapper {
+  position: relative;
+  width: 100%;
+  min-height: 3em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 1.2rem 0.2rem 0.2rem;
+  word-break: break-word;
+  line-height: 1.2;
+}
+
 .grid-student-name {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-main);
-  min-height: 2.5em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  word-break: break-word;
-  line-height: 1.2;
-  width: 100%;
-  padding: 0.2rem;
   transition: all 0.2s ease;
 }
 
-.grid-student-name.hidden-name {
+.grid-student-pref-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--accent-primary);
+  margin-top: 0.15rem;
+}
+
+.grid-edit-pencil {
+  position: absolute;
+  top: 50%;
+  right: -2px;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  padding: 2px 4px;
+}
+
+.grid-student-card:hover .grid-edit-pencil {
+  opacity: 1;
+}
+
+.grid-edit-pencil:hover {
+  transform: translateY(-50%) scale(1.25);
+}
+
+.grid-student-name-wrapper.hidden-name {
   background-color: rgba(51, 65, 85, 0.6);
   color: transparent;
   border-radius: var(--radius-sm);
   position: relative;
+  padding-right: 0.2rem;
 }
 
-.grid-student-name.hidden-name::after {
+.grid-student-name-wrapper.hidden-name .grid-student-name,
+.grid-student-name-wrapper.hidden-name .grid-student-pref-name,
+.grid-student-name-wrapper.hidden-name .grid-edit-pencil {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.grid-student-name-wrapper.hidden-name::after {
   content: "Click to reveal";
   color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
   position: absolute;
+}
+
+.grid-student-card.editing {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.grid-student-edit-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.2rem;
+}
+
+.grid-edit-roster-name {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.grid-pref-input {
+  width: 100%;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.35rem;
+  text-align: center;
+}
+
+.grid-edit-btn-row {
+  display: flex;
+  gap: 0.3rem;
+  width: 100%;
+  justify-content: center;
+}
+
+.grid-edit-btn-row .btn {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.7rem;
 }
 
 .grid-box-tag {
@@ -1492,6 +1589,7 @@ body.screen-summary #screen-summary { display: block; }
   let activeGridDeck = null; // Current deck displayed in Class Grid view
   let gridNamesHidden = true; // Whether names are hidden in grid view
   let gridRevealedIds = new Set(); // Card IDs individually revealed in grid view
+  let editingCardId = null; // Card ID currently in preferred name inline edit mode
 
   // Matrix multiplication helper: A * B
   function multiplyMatrix(m1, m2) {
@@ -1959,12 +2057,15 @@ body.screen-summary #screen-summary { display: block; }
     const gridEl = document.getElementById('import-grid');
     gridEl.innerHTML = '';
 
-    importData.cards.forEach(card => {
+    importData.cards.forEach((card, idx) => {
       const cardEl = document.createElement('div');
       cardEl.className = 'import-card-item' + (card.warning ? ' warn' : '');
       cardEl.innerHTML = `
         <img src="${card.photo}" class="import-photo-thumb" alt="Thumb">
         <div class="import-card-name">${escapeHtml(card.name)}</div>
+        <div class="import-card-pref-wrapper">
+          <input type="text" class="input-text sm import-preferred-input" data-idx="${idx}" placeholder="Preferred Name" value="${escapeHtml(card.preferredName || '')}">
+        </div>
         ${card.warning ? `<div class="import-card-status">${escapeHtml(card.warning)}</div>` : ''}
       `;
       gridEl.appendChild(cardEl);
@@ -2425,22 +2526,89 @@ body.screen-summary #screen-summary { display: block; }
 
     activeGridDeck.cards.forEach(card => {
       const isHidden = gridNamesHidden && !gridRevealedIds.has(card.id);
-      const cardEl = document.createElement('div');
-      cardEl.className = 'grid-student-card';
-      cardEl.innerHTML = `
-        <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
-        <div class="grid-student-name ${isHidden ? 'hidden-name' : ''}">${escapeHtml(card.name)}</div>
-        <div class="grid-box-tag">Box ${card.box || 1}</div>
-      `;
+      const isEditing = editingCardId === card.id;
 
-      cardEl.addEventListener('click', () => {
-        if (gridRevealedIds.has(card.id)) {
-          gridRevealedIds.delete(card.id);
-        } else {
-          gridRevealedIds.add(card.id);
+      const cardEl = document.createElement('div');
+      cardEl.className = 'grid-student-card' + (isEditing ? ' editing' : '');
+
+      if (isEditing) {
+        cardEl.innerHTML = `
+          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
+          <div class="grid-student-edit-box">
+            <div class="grid-edit-roster-name" title="${escapeHtml(card.name)}">${escapeHtml(card.name)}</div>
+            <input type="text" class="input-text sm grid-pref-input" placeholder="Preferred Name" value="${escapeHtml(card.preferredName || '')}">
+            <div class="grid-edit-btn-row">
+              <button type="button" class="btn primary sm btn-save-pref" title="Save preferred name">✓ Save</button>
+              <button type="button" class="btn secondary sm btn-cancel-pref" title="Cancel">✕</button>
+            </div>
+          </div>
+          <div class="grid-box-tag">Box ${card.box || 1}</div>
+        `;
+
+        const prefInput = cardEl.querySelector('.grid-pref-input');
+        const saveBtn = cardEl.querySelector('.btn-save-pref');
+        const cancelBtn = cardEl.querySelector('.btn-cancel-pref');
+
+        cardEl.querySelectorAll('input, button, .grid-student-edit-box').forEach(el => {
+          el.addEventListener('click', (e) => e.stopPropagation());
+        });
+
+        prefInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            saveBtn.click();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelBtn.click();
+          }
+        });
+
+        saveBtn.addEventListener('click', () => {
+          const val = prefInput.value.trim();
+          card.preferredName = val || null;
+          activeGridDeck.updatedAt = new Date().toISOString();
+          setUnsaved(true);
+          updateStudentNameDatalist(loadedDecks);
+          editingCardId = null;
+          renderClassGrid();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+          editingCardId = null;
+          renderClassGrid();
+        });
+
+        setTimeout(() => prefInput.focus(), 50);
+      } else {
+        const prefText = card.preferredName ? `<div class="grid-student-pref-name">"${escapeHtml(card.preferredName)}"</div>` : '';
+        cardEl.innerHTML = `
+          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
+          <div class="grid-student-name-wrapper ${isHidden ? 'hidden-name' : ''}">
+            <div class="grid-student-name">${escapeHtml(card.name)}</div>
+            ${prefText}
+            <button type="button" class="grid-edit-pencil" title="Edit preferred name" data-id="${card.id}">✏️</button>
+          </div>
+          <div class="grid-box-tag">Box ${card.box || 1}</div>
+        `;
+
+        const editBtn = cardEl.querySelector('.grid-edit-pencil');
+        if (editBtn) {
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            editingCardId = card.id;
+            renderClassGrid();
+          });
         }
-        renderClassGrid();
-      });
+
+        cardEl.addEventListener('click', () => {
+          if (gridRevealedIds.has(card.id)) {
+            gridRevealedIds.delete(card.id);
+          } else {
+            gridRevealedIds.add(card.id);
+          }
+          renderClassGrid();
+        });
+      }
 
       container.appendChild(cardEl);
     });
@@ -2755,6 +2923,16 @@ body.screen-summary #screen-summary { display: block; }
     document.getElementById('btn-confirm-import').addEventListener('click', () => {
       if (!currentImportPending) return;
       const finalName = document.getElementById('import-deck-name').value.trim() || currentImportPending.deckName;
+
+      // Save preferred names from import grid inputs
+      const prefInputs = document.querySelectorAll('.import-preferred-input');
+      prefInputs.forEach(input => {
+        const idx = parseInt(input.getAttribute('data-idx'), 10);
+        if (!isNaN(idx) && currentImportPending.cards[idx]) {
+          const val = input.value.trim();
+          currentImportPending.cards[idx].preferredName = val || null;
+        }
+      });
 
       const newDeck = {
         schema: 1,

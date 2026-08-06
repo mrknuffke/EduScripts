@@ -13,6 +13,7 @@
   let activeGridDeck = null; // Current deck displayed in Class Grid view
   let gridNamesHidden = true; // Whether names are hidden in grid view
   let gridRevealedIds = new Set(); // Card IDs individually revealed in grid view
+  let editingCardId = null; // Card ID currently in preferred name inline edit mode
 
   // Matrix multiplication helper: A * B
   function multiplyMatrix(m1, m2) {
@@ -480,12 +481,15 @@
     const gridEl = document.getElementById('import-grid');
     gridEl.innerHTML = '';
 
-    importData.cards.forEach(card => {
+    importData.cards.forEach((card, idx) => {
       const cardEl = document.createElement('div');
       cardEl.className = 'import-card-item' + (card.warning ? ' warn' : '');
       cardEl.innerHTML = `
         <img src="${card.photo}" class="import-photo-thumb" alt="Thumb">
         <div class="import-card-name">${escapeHtml(card.name)}</div>
+        <div class="import-card-pref-wrapper">
+          <input type="text" class="input-text sm import-preferred-input" data-idx="${idx}" placeholder="Preferred Name" value="${escapeHtml(card.preferredName || '')}">
+        </div>
         ${card.warning ? `<div class="import-card-status">${escapeHtml(card.warning)}</div>` : ''}
       `;
       gridEl.appendChild(cardEl);
@@ -946,22 +950,89 @@
 
     activeGridDeck.cards.forEach(card => {
       const isHidden = gridNamesHidden && !gridRevealedIds.has(card.id);
-      const cardEl = document.createElement('div');
-      cardEl.className = 'grid-student-card';
-      cardEl.innerHTML = `
-        <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
-        <div class="grid-student-name ${isHidden ? 'hidden-name' : ''}">${escapeHtml(card.name)}</div>
-        <div class="grid-box-tag">Box ${card.box || 1}</div>
-      `;
+      const isEditing = editingCardId === card.id;
 
-      cardEl.addEventListener('click', () => {
-        if (gridRevealedIds.has(card.id)) {
-          gridRevealedIds.delete(card.id);
-        } else {
-          gridRevealedIds.add(card.id);
+      const cardEl = document.createElement('div');
+      cardEl.className = 'grid-student-card' + (isEditing ? ' editing' : '');
+
+      if (isEditing) {
+        cardEl.innerHTML = `
+          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
+          <div class="grid-student-edit-box">
+            <div class="grid-edit-roster-name" title="${escapeHtml(card.name)}">${escapeHtml(card.name)}</div>
+            <input type="text" class="input-text sm grid-pref-input" placeholder="Preferred Name" value="${escapeHtml(card.preferredName || '')}">
+            <div class="grid-edit-btn-row">
+              <button type="button" class="btn primary sm btn-save-pref" title="Save preferred name">✓ Save</button>
+              <button type="button" class="btn secondary sm btn-cancel-pref" title="Cancel">✕</button>
+            </div>
+          </div>
+          <div class="grid-box-tag">Box ${card.box || 1}</div>
+        `;
+
+        const prefInput = cardEl.querySelector('.grid-pref-input');
+        const saveBtn = cardEl.querySelector('.btn-save-pref');
+        const cancelBtn = cardEl.querySelector('.btn-cancel-pref');
+
+        cardEl.querySelectorAll('input, button, .grid-student-edit-box').forEach(el => {
+          el.addEventListener('click', (e) => e.stopPropagation());
+        });
+
+        prefInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            saveBtn.click();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelBtn.click();
+          }
+        });
+
+        saveBtn.addEventListener('click', () => {
+          const val = prefInput.value.trim();
+          card.preferredName = val || null;
+          activeGridDeck.updatedAt = new Date().toISOString();
+          setUnsaved(true);
+          updateStudentNameDatalist(loadedDecks);
+          editingCardId = null;
+          renderClassGrid();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+          editingCardId = null;
+          renderClassGrid();
+        });
+
+        setTimeout(() => prefInput.focus(), 50);
+      } else {
+        const prefText = card.preferredName ? `<div class="grid-student-pref-name">"${escapeHtml(card.preferredName)}"</div>` : '';
+        cardEl.innerHTML = `
+          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
+          <div class="grid-student-name-wrapper ${isHidden ? 'hidden-name' : ''}">
+            <div class="grid-student-name">${escapeHtml(card.name)}</div>
+            ${prefText}
+            <button type="button" class="grid-edit-pencil" title="Edit preferred name" data-id="${card.id}">✏️</button>
+          </div>
+          <div class="grid-box-tag">Box ${card.box || 1}</div>
+        `;
+
+        const editBtn = cardEl.querySelector('.grid-edit-pencil');
+        if (editBtn) {
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            editingCardId = card.id;
+            renderClassGrid();
+          });
         }
-        renderClassGrid();
-      });
+
+        cardEl.addEventListener('click', () => {
+          if (gridRevealedIds.has(card.id)) {
+            gridRevealedIds.delete(card.id);
+          } else {
+            gridRevealedIds.add(card.id);
+          }
+          renderClassGrid();
+        });
+      }
 
       container.appendChild(cardEl);
     });
@@ -1276,6 +1347,16 @@
     document.getElementById('btn-confirm-import').addEventListener('click', () => {
       if (!currentImportPending) return;
       const finalName = document.getElementById('import-deck-name').value.trim() || currentImportPending.deckName;
+
+      // Save preferred names from import grid inputs
+      const prefInputs = document.querySelectorAll('.import-preferred-input');
+      prefInputs.forEach(input => {
+        const idx = parseInt(input.getAttribute('data-idx'), 10);
+        if (!isNaN(idx) && currentImportPending.cards[idx]) {
+          const val = input.value.trim();
+          currentImportPending.cards[idx].preferredName = val || null;
+        }
+      });
 
       const newDeck = {
         schema: 1,
