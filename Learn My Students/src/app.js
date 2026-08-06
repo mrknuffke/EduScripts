@@ -219,6 +219,44 @@
       .trim();
   }
 
+  // --- DATE & TIME FORMATTERS ---
+  function formatRelativeTime(isoString) {
+    if (!isoString) return 'Not yet run';
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return 'Not yet run';
+
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    if (diffMs < 0) return 'Just now';
+
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffSecs < 45) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return `${diffDays}d ago`;
+
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function formatFullDateTime(isoString) {
+    if (!isoString) return 'Never run';
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return 'Never run';
+    return date.toLocaleString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  }
+
   function levenshtein(a, b) {
     const matrix = [];
     for (let i = 0; i <= b.length; i++) matrix[i] = [i];
@@ -348,7 +386,8 @@
       currentIndex: 0,
       isDrillEverything,
       stats: { correct: 0, partial: 0, missed: 0 },
-      missedCards: []
+      missedCards: [],
+      deckStatsMap: new Map()
     };
 
     return activeSession;
@@ -360,6 +399,16 @@
     const currentItem = activeSession.queue[activeSession.currentIndex];
     const { card, deck } = currentItem;
 
+    if (!activeSession.deckStatsMap) {
+      activeSession.deckStatsMap = new Map();
+    }
+    let dStats = activeSession.deckStatsMap.get(deck);
+    if (!dStats) {
+      dStats = { correct: 0, partial: 0, missed: 0, total: 0 };
+      activeSession.deckStatsMap.set(deck, dStats);
+    }
+    dStats.total++;
+
     card.seen = (card.seen || 0) + 1;
 
     if (outcome === 'correct') {
@@ -367,16 +416,19 @@
       card.box = Math.min((card.box || 1) + 1, 5);
       card.dueSession = deck.sessionCount + BOX_INTERVALS[card.box];
       activeSession.stats.correct++;
+      dStats.correct++;
     } else if (outcome === 'partial') {
       // Box unchanged
       card.dueSession = deck.sessionCount + BOX_INTERVALS[card.box || 1];
       activeSession.stats.partial++;
+      dStats.partial++;
     } else {
       // Miss
       card.missed = (card.missed || 0) + 1;
       card.box = 1;
       card.dueSession = deck.sessionCount + 1;
       activeSession.stats.missed++;
+      dStats.missed++;
       if (!activeSession.missedCards.includes(currentItem)) {
         activeSession.missedCards.push(currentItem);
       }
@@ -419,16 +471,63 @@
     document.getElementById('btn-study-combined').disabled = loadedDecks.length < 2;
 
     loadedDecks.forEach((deck, idx) => {
-      const dueCount = deck.cards.filter(c => c.dueSession <= (deck.sessionCount || 0)).length;
+      const totalCards = deck.cards ? deck.cards.length : 0;
+      const dueCount = deck.cards ? deck.cards.filter(c => c.dueSession <= (deck.sessionCount || 0)).length : 0;
+      const box45Count = deck.cards ? deck.cards.filter(c => (c.box || 1) >= 4).length : 0;
+      const masteryPct = totalCards > 0 ? Math.round((box45Count / totalCards) * 100) : 0;
+
+      const lastRunIso = deck.lastStudiedAt || (deck.sessionCount > 0 ? deck.updatedAt : null);
+      const relativeRunTime = formatRelativeTime(lastRunIso);
+      const fullRunTime = formatFullDateTime(lastRunIso);
+
+      let scoreBadgeHtml = '';
+      if (deck.lastScore !== undefined && deck.lastScore !== null) {
+        const score = Math.round(deck.lastScore);
+        let badgeClass = 'score-badge';
+        let icon = '🌱';
+        if (score >= 95) {
+          badgeClass += ' distinction';
+          icon = '👑';
+        } else if (score >= 80) {
+          badgeClass += ' meeting';
+          icon = '⭐';
+        } else if (score >= 55) {
+          badgeClass += ' developing';
+          icon = '🚀';
+        } else {
+          badgeClass += ' emerging';
+          icon = '🌱';
+        }
+        let detailText = '';
+        if (deck.lastRunStats && deck.lastRunStats.total > 0) {
+          detailText = ` (${deck.lastRunStats.correct}/${deck.lastRunStats.total} correct)`;
+        }
+        scoreBadgeHtml = `<span class="${badgeClass}" title="Last Session Score: ${score}%${escapeHtml(detailText)}">${icon} Last Score: ${score}%</span>`;
+      } else {
+        scoreBadgeHtml = `<span class="score-badge empty" title="No completed study session score recorded yet">No score yet</span>`;
+      }
 
       const itemEl = document.createElement('div');
       itemEl.className = 'deck-item';
       itemEl.innerHTML = `
         <div class="deck-info">
           <input type="checkbox" class="deck-checkbox" data-index="${idx}">
-          <div>
-            <div class="deck-title">${escapeHtml(deck.deckName)}</div>
-            <div class="deck-stats">${deck.cards.length} students • ${dueCount} due</div>
+          <div class="deck-details-wrapper">
+            <div class="deck-header-row">
+              <span class="deck-title">${escapeHtml(deck.deckName)}</span>
+              ${scoreBadgeHtml}
+            </div>
+            <div class="deck-indicators">
+              <span class="indicator-pill" title="Last study run: ${escapeHtml(fullRunTime)}">
+                <span>🕒</span> Last run: <strong>${escapeHtml(relativeRunTime)}</strong>
+              </span>
+              <span class="indicator-pill" title="${dueCount} of ${totalCards} cards currently due for review">
+                <span>👥</span> <strong>${totalCards}</strong> students (<span class="due-text">${dueCount} due</span>)
+              </span>
+              <span class="indicator-pill" title="${box45Count} of ${totalCards} students in Box 4 or Box 5 (mastered)">
+                <span>🏆</span> Mastery: <strong>${masteryPct}%</strong> (${box45Count}/${totalCards} Box 4+)
+              </span>
+            </div>
           </div>
         </div>
         <div class="deck-actions">
@@ -800,6 +899,32 @@
     document.getElementById('sum-stat-partial').textContent = activeSession.stats.partial;
     document.getElementById('sum-stat-missed').textContent = activeSession.stats.missed;
 
+    // Record last run timestamp, score, and stats for each deck studied in this session
+    const nowIso = new Date().toISOString();
+    if (activeSession && activeSession.deckStatsMap && activeSession.deckStatsMap.size > 0) {
+      activeSession.deckStatsMap.forEach((dStats, deck) => {
+        if (dStats.total > 0) {
+          const deckScorePct = Math.round(((dStats.correct + 0.5 * dStats.partial) / dStats.total) * 100);
+          deck.lastStudiedAt = nowIso;
+          deck.lastScore = deckScorePct;
+          deck.lastRunStats = {
+            correct: dStats.correct,
+            partial: dStats.partial,
+            missed: dStats.missed,
+            total: dStats.total
+          };
+          deck.updatedAt = nowIso;
+        }
+      });
+      setUnsaved(true);
+    } else if (activeSession && activeSession.decks) {
+      activeSession.decks.forEach(deck => {
+        deck.lastStudiedAt = nowIso;
+        deck.updatedAt = nowIso;
+      });
+      setUnsaved(true);
+    }
+
     // Performance rubric tier calculation
     const totalSessionCards = activeSession.stats.correct + activeSession.stats.partial + activeSession.stats.missed;
     const score = totalSessionCards > 0 ? ((activeSession.stats.correct + 0.5 * activeSession.stats.partial) / totalSessionCards) * 100 : 0;
@@ -1051,6 +1176,9 @@
         createdAt: deck.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sessionCount: deck.sessionCount || 0,
+        lastStudiedAt: deck.lastStudiedAt || null,
+        lastScore: deck.lastScore !== undefined ? deck.lastScore : null,
+        lastRunStats: deck.lastRunStats || null,
         cards: deck.cards.map(c => ({
           id: c.id,
           name: c.name,
@@ -1116,6 +1244,9 @@
         createdAt: deck.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sessionCount: deck.sessionCount || 0,
+        lastStudiedAt: deck.lastStudiedAt || null,
+        lastScore: deck.lastScore !== undefined ? deck.lastScore : null,
+        lastRunStats: deck.lastRunStats || null,
         cards: deck.cards.map(c => ({
           id: c.id,
           name: c.name,
@@ -1364,6 +1495,9 @@
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sessionCount: 0,
+        lastStudiedAt: null,
+        lastScore: null,
+        lastRunStats: null,
         cards: currentImportPending.cards
       };
 
