@@ -472,7 +472,7 @@
 
     loadedDecks.forEach((deck, idx) => {
       const totalCards = deck.cards ? deck.cards.length : 0;
-      const dueCount = deck.cards ? deck.cards.filter(c => c.dueSession <= (deck.sessionCount || 0)).length : 0;
+      const dueCount = deck.cards ? deck.cards.filter(c => (c.dueSession || 1) <= ((deck.sessionCount || 0) + 1)).length : 0;
       const box45Count = deck.cards ? deck.cards.filter(c => (c.box || 1) >= 4).length : 0;
       const masteryPct = totalCards > 0 ? Math.round((box45Count / totalCards) * 100) : 0;
 
@@ -1305,6 +1305,7 @@
     if (!files || files.length === 0) return;
 
     let jsonCount = 0;
+    const importedDeckNames = [];
     const pdfFiles = [];
 
     for (let i = 0; i < files.length; i++) {
@@ -1332,6 +1333,9 @@
               } else {
                 loadedDecks.push(deckObj);
               }
+              if (deckObj.deckName) {
+                importedDeckNames.push(deckObj.deckName);
+              }
               jsonCount++;
             });
           } else {
@@ -1349,6 +1353,8 @@
 
     if (jsonCount > 0) {
       renderHome();
+      const deckListStr = importedDeckNames.length > 0 ? `: ${importedDeckNames.join(', ')}` : '.';
+      alert(`Successfully loaded ${jsonCount} deck(s) from JSON${deckListStr}`);
     }
 
     // Process PDF files
