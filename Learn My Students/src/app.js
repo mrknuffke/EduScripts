@@ -15,6 +15,89 @@
   let gridRevealedIds = new Set(); // Card IDs individually revealed in grid view
   let editingCardId = null; // Card ID currently in preferred name inline edit mode
 
+  // --- BROWSER STORAGE PERSISTENCE (IndexedDB + localStorage) ---
+  const DB_NAME = 'LearnMyStudentsDB';
+  const STORE_NAME = 'decks_store';
+  const DB_VERSION = 1;
+
+  function openDB() {
+    return new Promise((resolve) => {
+      if (!window.indexedDB) {
+        resolve(null);
+        return;
+      }
+      try {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => {
+          console.warn('IndexedDB error:', e.target.error);
+          resolve(null);
+        };
+      } catch (err) {
+        console.warn('IndexedDB exception:', err);
+        resolve(null);
+      }
+    });
+  }
+
+  async function persistDecksToStorage() {
+    try {
+      const db = await openDB();
+      if (db) {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.put(loadedDecks, 'loaded_decks_data');
+        await new Promise((res) => {
+          tx.oncomplete = res;
+          tx.onerror = res;
+        });
+      } else {
+        localStorage.setItem('learn_my_students_decks', JSON.stringify(loadedDecks));
+      }
+    } catch (err) {
+      console.warn('Failed to persist decks via IndexedDB, trying localStorage fallback:', err);
+      try {
+        localStorage.setItem('learn_my_students_decks', JSON.stringify(loadedDecks));
+      } catch (e) {
+        console.warn('LocalStorage fallback failed:', e);
+      }
+    }
+  }
+
+  async function loadDecksFromStorage() {
+    try {
+      const db = await openDB();
+      if (db) {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.get('loaded_decks_data');
+        const data = await new Promise((res) => {
+          req.onsuccess = () => res(req.result);
+          req.onerror = () => res(null);
+        });
+        if (data && Array.isArray(data) && data.length > 0) {
+          return data;
+        }
+      }
+      const localData = localStorage.getItem('learn_my_students_decks');
+      if (localData) {
+        const parsed = JSON.parse(localData);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load decks from storage:', err);
+    }
+    return null;
+  }
+
   // Matrix multiplication helper: A * B
   function multiplyMatrix(m1, m2) {
     return [
@@ -338,7 +421,7 @@
   }
 
   // --- SCHEDULER (LEITNER §7) ---
-  const BOX_INTERVALS = [0, 1, 2, 4, 8, 16]; // 1-indexed by box number
+  const BOX_INTERVALS = [0, 1, 3, 6, 12, 25]; // 1-indexed by box number
 
   function startStudySession(decksToStudy, isDrillEverything = false) {
     // Increment sessionCount for each involved deck
@@ -376,8 +459,8 @@
         sessionQueue = sessionQueue.concat(boxGroups[b]);
       }
 
-      // Limit to max 20 cards default session length
-      sessionQueue = sessionQueue.slice(0, 20);
+      // Allow full class roster study sessions (up to 50 cards)
+      sessionQueue = sessionQueue.slice(0, 50);
     }
 
     activeSession = {
@@ -917,12 +1000,14 @@
         }
       });
       setUnsaved(true);
+      persistDecksToStorage();
     } else if (activeSession && activeSession.decks) {
       activeSession.decks.forEach(deck => {
         deck.lastStudiedAt = nowIso;
         deck.updatedAt = nowIso;
       });
       setUnsaved(true);
+      persistDecksToStorage();
     }
 
     // Performance rubric tier calculation
@@ -1035,6 +1120,7 @@
           });
           e.target.closest('.missed-card-row').remove();
           setUnsaved(true);
+          persistDecksToStorage();
         });
       });
     }
@@ -1368,6 +1454,7 @@
           if (confirm(`A deck named "${importResult.deckName}" is already loaded. Would you like to MERGE the new PDF into it?\n\nMerging preserves existing progress for returning students.`)) {
             mergeDecks(existingDeck, importResult.cards);
             setUnsaved(true);
+            persistDecksToStorage();
             renderHome();
             continue;
           }
@@ -1515,6 +1602,7 @@
       }
 
       setUnsaved(true);
+      persistDecksToStorage();
       currentImportPending = null;
       processNextImportQueue();
     });
@@ -1661,7 +1749,7 @@
     if (restartSessionBtn) {
       restartSessionBtn.addEventListener('click', () => {
         if (activeSession && activeSession.decks) {
-          launchSession(activeSession.decks, activeSession.isDrillEverything || false);
+          launchSession(activeSession.decks, true);
         }
       });
     }
@@ -1679,7 +1767,15 @@
       }
     });
 
-    renderHome();
+    loadDecksFromStorage().then(stored => {
+      if (stored && Array.isArray(stored) && stored.length > 0) {
+        loadedDecks = stored;
+      }
+      renderHome();
+    }).catch(err => {
+      console.warn('Storage load failed:', err);
+      renderHome();
+    });
   }
 
   window.addEventListener('DOMContentLoaded', init);
