@@ -540,18 +540,22 @@
     const listEl = document.getElementById('deck-list');
     listEl.innerHTML = '';
 
-    const exportCollectiveHomeBtn = document.getElementById('btn-export-collective-home');
-    if (exportCollectiveHomeBtn) {
-      exportCollectiveHomeBtn.disabled = loadedDecks.length === 0;
+    function updateHeaderActionStates() {
+      const selectedBoxes = listEl.querySelectorAll('.deck-checkbox:checked');
+      const exportCollectiveHomeBtn = document.getElementById('btn-export-collective-home');
+      const studyCombinedBtn = document.getElementById('btn-study-combined');
+      const deleteSelectedBtn = document.getElementById('btn-delete-selected');
+
+      if (exportCollectiveHomeBtn) exportCollectiveHomeBtn.disabled = loadedDecks.length === 0;
+      if (deleteSelectedBtn) deleteSelectedBtn.disabled = selectedBoxes.length === 0;
+      if (studyCombinedBtn) studyCombinedBtn.disabled = selectedBoxes.length < 2;
     }
 
     if (loadedDecks.length === 0) {
       listEl.innerHTML = '<div class="empty-state">No decks loaded yet. Drop a PDF or deck file above to get started!</div>';
-      document.getElementById('btn-study-combined').disabled = true;
+      updateHeaderActionStates();
       return;
     }
-
-    document.getElementById('btn-study-combined').disabled = loadedDecks.length < 2;
 
     loadedDecks.forEach((deck, idx) => {
       const totalCards = deck.cards ? deck.cards.length : 0;
@@ -617,12 +621,19 @@
           <button class="btn primary btn-study-deck" data-index="${idx}">Study (${dueCount} due)</button>
           <button class="btn secondary btn-drill-deck" data-index="${idx}">Drill All</button>
           <button class="btn secondary btn-grid-deck" data-index="${idx}">Class Grid</button>
+          <button class="btn danger btn-delete-deck" data-index="${idx}" title="Delete class ${escapeHtml(deck.deckName)}">🗑️ Delete Class</button>
         </div>
       `;
       listEl.appendChild(itemEl);
     });
 
+    updateHeaderActionStates();
+
     // Attach listeners
+    listEl.querySelectorAll('.deck-checkbox').forEach(cb => {
+      cb.addEventListener('change', updateHeaderActionStates);
+    });
+
     listEl.querySelectorAll('.btn-study-deck').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const index = parseInt(e.target.getAttribute('data-index'), 10);
@@ -641,6 +652,20 @@
       btn.addEventListener('click', (e) => {
         const index = parseInt(e.target.getAttribute('data-index'), 10);
         openClassGrid(loadedDecks[index]);
+      });
+    });
+
+    listEl.querySelectorAll('.btn-delete-deck').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const index = parseInt(e.target.getAttribute('data-index'), 10);
+        const deck = loadedDecks[index];
+        if (!deck) return;
+        if (confirm(`Are you sure you want to delete the class "${deck.deckName}"?\n\nThis will remove this class roster and its study progress from your browser.`)) {
+          loadedDecks.splice(index, 1);
+          setUnsaved(true);
+          persistDecksToStorage();
+          renderHome();
+        }
       });
     });
   }
@@ -1566,6 +1591,47 @@
       const selectedDecks = Array.from(selectedBoxes).map(cb => loadedDecks[parseInt(cb.getAttribute('data-index'), 10)]);
       launchSession(selectedDecks, false);
     });
+
+    // Delete Selected
+    const btnDeleteSelected = document.getElementById('btn-delete-selected');
+    if (btnDeleteSelected) {
+      btnDeleteSelected.addEventListener('click', () => {
+        const selectedBoxes = document.querySelectorAll('.deck-checkbox:checked');
+        if (selectedBoxes.length === 0) return;
+        const indicesToDelete = Array.from(selectedBoxes)
+          .map(cb => parseInt(cb.getAttribute('data-index'), 10))
+          .sort((a, b) => b - a);
+
+        const namesStr = indicesToDelete.map(idx => loadedDecks[idx]?.deckName).filter(Boolean).map(n => `• ${n}`).join('\n');
+        if (confirm(`Are you sure you want to delete the following ${indicesToDelete.length} class(es)?\n\n${namesStr}\n\nThis will remove them from your browser storage.`)) {
+          indicesToDelete.forEach(idx => {
+            loadedDecks.splice(idx, 1);
+          });
+          setUnsaved(true);
+          persistDecksToStorage();
+          renderHome();
+        }
+      });
+    }
+
+    // Delete Class from Class Grid header
+    const btnGridDeleteDeck = document.getElementById('btn-grid-delete-deck');
+    if (btnGridDeleteDeck) {
+      btnGridDeleteDeck.addEventListener('click', () => {
+        if (!activeGridDeck) return;
+        if (confirm(`Are you sure you want to delete the class "${activeGridDeck.deckName}"?\n\nThis will remove this class roster and its study progress.`)) {
+          const idx = loadedDecks.findIndex(d => d.deckName === activeGridDeck.deckName);
+          if (idx !== -1) {
+            loadedDecks.splice(idx, 1);
+            setUnsaved(true);
+            persistDecksToStorage();
+          }
+          activeGridDeck = null;
+          renderHome();
+          showScreen('home');
+        }
+      });
+    }
 
     // Import confirmation actions
     document.getElementById('btn-confirm-import').addEventListener('click', () => {

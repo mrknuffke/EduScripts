@@ -472,6 +472,8 @@ body.screen-summary #screen-summary { display: block; }
 .deck-actions {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 /* Screen 2: Import Screen */
