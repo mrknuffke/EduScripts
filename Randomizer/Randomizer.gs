@@ -31,8 +31,8 @@ function onOpen() {
         .addSeparator()
 
         // --- SECTION 3: ROOM SETUP ---
+        // Table count, labels, seat counts and fill order all live in Configure Tables.
         .addItem('🪑 Configure Tables', 'configureTables')
-        .addItem('🧱 Set Room Constraints', 'configureCapacityConstraints')
         .addItem('⚖️ Configure Data Balancing', 'configureBalancing')
         .addItem('🗺️ Generate Map Template', 'generateMapTemplate')
         .addSeparator()
@@ -82,6 +82,207 @@ function randomizeSocialMixer() {
  * Creates a custom menu in the spreadsheet UI when the document is opened.
 // ============================================================================
 
+// ============================================================================
+// ROOM & TABLE CONFIGURATION MODEL
+// ============================================================================
+//
+// A room's configuration describes three independent things:
+//
+//   1. PRINT ORDER  - the order tables appear on the chart, left to right.
+//                     This is just the order of the `tables` array.
+//   2. LABEL        - what each table is called. Numbers, letters, or names
+//                     ("Window Bench"). Purely cosmetic; nothing keys off it.
+//   3. FILL PRIORITY- the order tables get students. Independent of print
+//                     order, so a room whose physical numbering runs backwards
+//                     can still print 1..N while filling N..1.
+//
+// Plus per-table seat counts, which act as hard caps during distribution.
+// ============================================================================
+
+/**
+ * Normalizes a stored room configuration into its canonical shape.
+ *
+ * Two stored formats are supported:
+ *   Legacy: 6                        (a bare table count)
+ *   Full:   { tables: [{label, seats}, ...], fillStrategy, fillPriority }
+ *
+ * @param {number|string|Object} raw - The stored value for a single room.
+ * @returns {Object|null} { tables, fillStrategy, fillPriority }, or null if unset.
+ */
+function normalizeRoomConfig(raw) {
+    if (raw === null || raw === undefined || raw === '') return null;
+
+    // Legacy format: a bare number means N tables labelled 1..N, no seat limits.
+    if (typeof raw === 'number' || typeof raw === 'string') {
+        const count = parseInt(raw, 10);
+        if (!count || count < 1) return null;
+        return {
+            tables: Array.from({ length: count }, (_, i) => ({ label: String(i + 1), seats: 0 })),
+            fillStrategy: 'spread',
+            fillPriority: 'forward'
+        };
+    }
+
+    const rawTables = Array.isArray(raw.tables) ? raw.tables : [];
+    if (rawTables.length === 0) {
+        // Object form but no table list — fall back to a plain count if one is there.
+        return normalizeRoomConfig(raw.count || 0);
+    }
+
+    const tables = rawTables.map((t, i) => {
+        const rawLabel = (t && t.label !== undefined && t.label !== null) ? String(t.label).trim() : '';
+        const seats = (t && parseInt(t.seats, 10) > 0) ? parseInt(t.seats, 10) : 0; // 0 = no limit
+        return { label: rawLabel || String(i + 1), seats: seats };
+    });
+
+    let priority = raw.fillPriority;
+    if (priority !== 'reverse' && !Array.isArray(priority)) priority = 'forward';
+
+    return {
+        tables: tables,
+        fillStrategy: (raw.fillStrategy === 'pack') ? 'pack' : 'spread',
+        fillPriority: priority
+    };
+}
+
+/**
+ * Resolves a room's fill priority into an ordered list of 0-based table indices.
+ * Any table missing from a custom order is appended in print order, so a partial
+ * or malformed custom order can never drop a table out of the run.
+ *
+ * @param {Object} roomConfig - A normalized room config.
+ * @returns {Array<number>} Table indices, highest priority first.
+ */
+function buildFillOrder(roomConfig) {
+    const n = roomConfig.tables.length;
+    const printOrder = Array.from({ length: n }, (_, i) => i);
+
+    if (roomConfig.fillPriority === 'reverse') return printOrder.slice().reverse();
+    if (!Array.isArray(roomConfig.fillPriority)) return printOrder;
+
+    const order = [];
+    const seen = new Set();
+
+    roomConfig.fillPriority.forEach(pos => {
+        const idx = parseInt(pos, 10) - 1; // Custom orders are stored as 1-based print positions
+        if (idx >= 0 && idx < n && !seen.has(idx)) {
+            seen.add(idx);
+            order.push(idx);
+        }
+    });
+    printOrder.forEach(i => { if (!seen.has(i)) order.push(i); });
+
+    return order;
+}
+
+/**
+ * Works out how many students each table should receive, honouring seat counts,
+ * fill priority, fill strategy and the room's minimum group size.
+ *
+ * @param {Object} roomConfig - A normalized room config.
+ * @param {number} studentCount - Students to seat.
+ * @param {number} minPerTable - Minimum group size (0 = none).
+ * @returns {Object} { capacities, unseated, tablesUsed }
+ *                   `unseated` is > 0 only when the room has fewer seats than students.
+ */
+function computeTargetCapacities(roomConfig, studentCount, minPerTable) {
+    const n = roomConfig.tables.length;
+    const capacities = Array(n).fill(0);
+    if (studentCount <= 0 || n === 0) return { capacities: capacities, unseated: 0, tablesUsed: 0 };
+
+    const order = buildFillOrder(roomConfig);
+
+    // Minimum group size caps how many tables we're allowed to open at all.
+    // Tables are dropped from the BACK of the fill order, not the back of the room.
+    let usableCount = n;
+    if (minPerTable > 0) {
+        usableCount = Math.max(1, Math.min(n, Math.floor(studentCount / minPerTable)));
+    }
+    const usable = order.slice(0, usableCount);
+
+    // A table with no explicit seat count is treated as "an even share" so that
+    // Pack mode doesn't dump the entire class at the first table.
+    const evenShare = Math.ceil(studentCount / usable.length);
+    const seatLimit = roomConfig.tables.map(t => t.seats > 0 ? t.seats : null);
+
+    let remaining = studentCount;
+
+    if (roomConfig.fillStrategy === 'pack') {
+        // Fill each table to its seat count in priority order; the tail runs empty.
+        usable.forEach(i => {
+            if (remaining <= 0) return;
+            const cap = (seatLimit[i] === null) ? evenShare : seatLimit[i];
+            const take = Math.min(cap, remaining);
+            capacities[i] = take;
+            remaining -= take;
+        });
+    } else {
+        // Spread: hand out one seat at a time in priority order, so leftover
+        // students land at the highest-priority tables.
+        let seatedThisPass = true;
+        while (remaining > 0 && seatedThisPass) {
+            seatedThisPass = false;
+            for (const i of usable) {
+                if (remaining <= 0) break;
+                if (seatLimit[i] !== null && capacities[i] >= seatLimit[i]) continue;
+                capacities[i]++;
+                remaining--;
+                seatedThisPass = true;
+            }
+        }
+    }
+
+    return {
+        capacities: capacities,
+        unseated: remaining,
+        tablesUsed: capacities.filter(c => c > 0).length
+    };
+}
+
+/**
+ * Total seats in a room, or null if any table is uncapped (so no meaningful total).
+ */
+function getRoomSeatTotal(roomConfig) {
+    let total = 0;
+    for (const t of roomConfig.tables) {
+        if (!t.seats) return null;
+        total += t.seats;
+    }
+    return total;
+}
+
+/**
+ * Turns a table label into the heading shown on charts and in warnings.
+ * Bare numbers read as "Table 4"; anything else is used verbatim ("Window Bench").
+ */
+function formatTableTitle(label) {
+    const clean = String(label === undefined || label === null ? '' : label).trim();
+    if (!clean) return 'Table';
+    return /^\d+$/.test(clean) ? 'Table ' + clean : clean;
+}
+
+/**
+ * Resolves a saved table reference to a 0-based table index.
+ * Accepts a label ("C", "Window Bench") or a legacy 1-based print position.
+ *
+ * @returns {number} The table index, or -1 if it can't be matched.
+ */
+function resolveTableIndex(ref, roomConfig) {
+    if (ref === null || ref === undefined) return -1;
+    const needle = String(ref).trim();
+    if (!needle) return -1;
+
+    for (let i = 0; i < roomConfig.tables.length; i++) {
+        if (roomConfig.tables[i].label.toLowerCase() === needle.toLowerCase()) return i;
+    }
+
+    // Legacy configs stored 1-based print positions rather than labels.
+    const asNumber = parseInt(needle, 10);
+    if (!isNaN(asNumber) && asNumber >= 1 && asNumber <= roomConfig.tables.length) return asNumber - 1;
+
+    return -1;
+}
+
 /**
  * Opens the Table & Capacity Configuration Dialog.
  */
@@ -98,35 +299,57 @@ function configureTables() {
     const tableConfig = JSON.parse(properties.getProperty('tableConfig') || '{}');
     const capacityConstraints = JSON.parse(properties.getProperty('capacityConstraints') || '{}');
 
-    // Build data object
+    // Largest class using each room, so the dialog can flag rooms with too few seats.
+    const roomLoad = {};
+    Object.values(sectionData).forEach(s => {
+        roomLoad[s.room] = Math.max(roomLoad[s.room] || 0, s.students.length);
+    });
+
+    // Normalize every room up front so the dialog only ever deals with one shape.
+    const roomConfigs = {};
+    rooms.forEach(room => {
+        const normalized = normalizeRoomConfig(tableConfig[room]);
+        roomConfigs[room] = {
+            tables: normalized ? normalized.tables : [],
+            fillStrategy: normalized ? normalized.fillStrategy : 'spread',
+            fillPriority: normalized ? normalized.fillPriority : 'forward',
+            min: (capacityConstraints[room] && capacityConstraints[room].min) || 0
+        };
+    });
+
     const data = {
         rooms: rooms,
-        tableConfig: tableConfig,
-        capacityConstraints: capacityConstraints
+        roomConfigs: roomConfigs,
+        roomLoad: roomLoad
     };
 
     const html = buildTableConfigHtml(data);
-    SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(600).setHeight(500), 'Configure Tables & Capacity');
+    SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(820).setHeight(640), 'Configure Tables & Capacity');
 }
 
 /**
- * Server-side handler to save Table Config
+ * Server-side handler to save Table Config.
+ *
+ * @param {Object} payload - { roomName: { tables, fillStrategy, fillPriority, min } }
  */
-function saveTableConfig(formObject) {
+function saveTableConfig(payload) {
     const properties = PropertiesService.getDocumentProperties();
     const tableConfig = {};
     const capacityConstraints = {};
 
-    // formObject will look like { "tables_H201": "6", "min_H201": "4", ... }
-    for (const key in formObject) {
-        if (key.startsWith('tables_')) {
-            const room = key.substring(7);
-            tableConfig[room] = parseInt(formObject[key], 10) || 0;
-        } else if (key.startsWith('min_')) {
-            const room = key.substring(4);
-            const min = parseInt(formObject[key], 10) || 0;
-            if (min > 0) capacityConstraints[room] = { min: min };
-        }
+    for (const room in payload) {
+        const entry = payload[room] || {};
+        const normalized = normalizeRoomConfig(entry);
+        if (!normalized || normalized.tables.length === 0) continue; // Room left unconfigured
+
+        tableConfig[room] = {
+            tables: normalized.tables,
+            fillStrategy: normalized.fillStrategy,
+            fillPriority: normalized.fillPriority
+        };
+
+        const min = parseInt(entry.min, 10) || 0;
+        if (min > 0) capacityConstraints[room] = { min: min };
     }
 
     properties.setProperty('tableConfig', JSON.stringify(tableConfig));
@@ -166,11 +389,20 @@ function showConfigDialog(configType, title) {
     const currentConfig = JSON.parse(properties.getProperty(configType) || '{}');
     const tableConfig = JSON.parse(properties.getProperty('tableConfig') || '{}');
 
+    // Resolve each room to its list of table labels, so the dialog can offer the
+    // real table names rather than assuming they're numbered 1..N.
+    const roomTables = {};
+    Object.values(sectionData).forEach(s => {
+        if (roomTables[s.room]) return;
+        const roomConfig = normalizeRoomConfig(tableConfig[s.room]);
+        roomTables[s.room] = roomConfig ? roomConfig.tables.map(t => t.label) : [];
+    });
+
     const data = {
         type: configType,
         sectionData: sectionData, // { "Section": { room: "H1", students: [{name:A}...] } }
-        currentConfig: currentConfig, // { "Section": { "Student": [1] } } or { "Section": [["A","B"]] }
-        tableConfig: tableConfig
+        currentConfig: currentConfig, // { "Section": { "Student": ["A"] } } or { "Section": [["A","B"]] }
+        roomTables: roomTables // { "H1": ["1","2","3"] }
     };
 
     const html = buildGenericConfigHtml(data, title);
@@ -292,46 +524,395 @@ function buildBalancingConfigHtml(data) {
 }
 
 function buildTableConfigHtml(data) {
+    const safeData = JSON.stringify(data);
+
     return `
     <style>
-        body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; }
-        .room-row { display: flex; align-items: center; margin-bottom: 15px; background: #f8f9fa; padding: 10px; border-radius: 6px; }
-        .room-name { flex: 1; font-weight: bold; font-size: 1.1em; }
-        .input-group { display: flex; flex-direction: column; margin-left: 15px; }
-        label { font-size: 0.85em; color: #666; margin-bottom: 3px; }
-        input { padding: 5px; border: 1px solid #ccc; border-radius: 4px; width: 80px; }
-        button { background: #1a73e8; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; float: right; margin-top: 10px; }
-        button:hover { background: #1557b0; }
-        .desc { margin-bottom: 20px; color: #555; font-size: 0.9em; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 0; margin: 0; color: #333; background: #f4f6f8; }
+        .wrap { padding: 20px 20px 90px 20px; }
+        h3 { margin: 0 0 6px 0; }
+        .desc { margin-bottom: 18px; color: #555; font-size: 0.9em; line-height: 1.5; }
+
+        .room-card { background: #fff; border: 1px solid #dadce0; border-radius: 8px; margin-bottom: 18px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .room-head { padding: 12px 15px; background: #f1f3f4; border-bottom: 1px solid #dadce0; font-weight: 600; font-size: 1.05em; display: flex; justify-content: space-between; align-items: center; }
+        .room-load { font-weight: normal; font-size: 0.8em; color: #5f6368; }
+        .room-body { padding: 15px; }
+
+        .controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; margin-bottom: 14px; }
+        .field { display: flex; flex-direction: column; }
+        .field label { font-size: 0.78em; color: #5f6368; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
+        .field input, .field select { padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; background: #fff; }
+        .field input[type="number"] { width: 80px; }
+        .field.custom input { width: 150px; }
+
+        .quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; padding: 8px 10px; background: #f8f9fa; border-radius: 6px; font-size: 0.82em; color: #5f6368; }
+        .quick .q-label { margin-right: 2px; }
+        .chip-btn { background: #fff; border: 1px solid #dadce0; color: #1a73e8; padding: 4px 10px; border-radius: 14px; cursor: pointer; font-size: 12px; }
+        .chip-btn:hover { background: #e8f0fe; }
+        .quick input[type="number"] { width: 55px; padding: 4px 6px; border: 1px solid #dadce0; border-radius: 4px; }
+
+        table.tables-grid { border-collapse: collapse; width: 100%; }
+        table.tables-grid th { text-align: left; font-size: 0.75em; text-transform: uppercase; color: #5f6368; padding: 4px 8px; font-weight: 600; letter-spacing: 0.03em; }
+        table.tables-grid td { padding: 3px 8px; }
+        table.tables-grid input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; box-sizing: border-box; }
+        .pos-cell { width: 90px; color: #5f6368; font-size: 12px; white-space: nowrap; }
+        .pos-order { display: inline-block; min-width: 20px; height: 20px; line-height: 20px; text-align: center; background: #e8f0fe; color: #1967d2; border-radius: 10px; font-size: 11px; font-weight: 600; margin-left: 4px; padding: 0 5px; }
+        .label-input { width: 100%; }
+        .seats-input { width: 80px; }
+
+        .summary { margin-top: 12px; font-size: 0.85em; color: #5f6368; }
+        .summary.warn { color: #c5221f; font-weight: 500; }
+        .empty-note { color: #999; font-style: italic; font-size: 0.9em; }
+
+        .footer { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #ddd; padding: 12px 20px; text-align: right; }
+        .save-btn { background: #34a853; color: white; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500; }
+        .save-btn:hover { background: #2d8e47; }
+        .save-btn:disabled { background: #dadce0; color: #80868b; cursor: not-allowed; }
     </style>
-    <h3>Detailed Table Configuration</h3>
-    <div class="desc">Set the number of table groups for each room. Optionally, set a Minimum Group Size to force clumping (e.g. fewer tables will be used if class size is small).</div>
-    <form id="configForm">
-        ${data.rooms.map(room => `
-            <div class="room-row">
-                <div class="room-name">${room}</div>
-                <div class="input-group">
-                    <label># Tables</label>
-                    <input type="number" name="tables_${room}" value="${data.tableConfig[room] || ''}" min="1" required>
-                </div>
-                <div class="input-group">
-                    <label>Min Size (Optional)</label>
-                    <input type="number" name="min_${room}" value="${(data.capacityConstraints[room] && data.capacityConstraints[room].min) || 0}" min="0">
-                </div>
-            </div>
-        `).join('')}
-        <button type="button" onclick="save()">Save Settings</button>
-    </form>
+
+    <div class="wrap">
+        <h3>Detailed Table Configuration</h3>
+        <div class="desc">
+            Tables print left-to-right in the order listed below. <b>Label</b> is what appears on the chart (a number, a letter, or a name like "Window Bench").
+            <b>Seats</b> is a hard cap on that table &mdash; leave it blank for no limit.
+            <b>Fill priority</b> controls which tables get students first, independently of print order &mdash; use <i>Reverse</i> for a room whose physical numbering runs backwards.
+        </div>
+        <div id="rooms"></div>
+    </div>
+
+    <div class="footer">
+        <button class="save-btn" onclick="save()">Save Configuration</button>
+    </div>
+
     <script>
+        const DATA = ${safeData};
+        const CONFIGS = DATA.roomConfigs;
+
+        // --- Rendering -------------------------------------------------------
+
+        function render() {
+            const container = document.getElementById('rooms');
+            container.innerHTML = '';
+            DATA.rooms.forEach(room => container.appendChild(renderRoom(room)));
+        }
+
+        function renderRoom(room) {
+            const cfg = CONFIGS[room];
+            const load = DATA.roomLoad[room] || 0;
+
+            const card = document.createElement('div');
+            card.className = 'room-card';
+
+            const head = document.createElement('div');
+            head.className = 'room-head';
+            head.innerHTML = '<span>' + escapeHtml(room) + '</span>' +
+                '<span class="room-load">Largest class using this room: ' + load + ' students</span>';
+            card.appendChild(head);
+
+            const body = document.createElement('div');
+            body.className = 'room-body';
+
+            // Row of room-level controls
+            const controls = document.createElement('div');
+            controls.className = 'controls';
+
+            controls.appendChild(makeField('# Tables', numberInput(cfg.tables.length, 0, v => {
+                setTableCount(room, v);
+                render();
+            })));
+
+            controls.appendChild(makeField('Fill Strategy', selectInput([
+                ['spread', 'Spread evenly'],
+                ['pack', 'Pack to seat counts']
+            ], cfg.fillStrategy, v => { cfg.fillStrategy = v; render(); })));
+
+            const priorityValue = Array.isArray(cfg.fillPriority) ? 'custom' : cfg.fillPriority;
+            controls.appendChild(makeField('Fill Priority', selectInput([
+                ['forward', 'Normal (first to last)'],
+                ['reverse', 'Reverse (last to first)'],
+                ['custom', 'Custom order...']
+            ], priorityValue, v => {
+                if (v === 'custom') {
+                    cfg.fillPriority = Array.isArray(cfg.fillPriority) ? cfg.fillPriority : defaultPriority(cfg);
+                } else {
+                    cfg.fillPriority = v;
+                }
+                render();
+            })));
+
+            if (priorityValue === 'custom') {
+                const custom = textInput(cfg.fillPriority.join(', '), v => {
+                    cfg.fillPriority = v.split(',')
+                        .map(n => parseInt(n.trim(), 10))
+                        .filter(n => !isNaN(n) && n >= 1);
+                    updateSummary(room);
+                });
+                custom.title = 'Positions from the list below, highest priority first. e.g. 3, 4, 1, 2';
+                const field = makeField('Priority Order (positions)', custom);
+                field.className = 'field custom';
+                controls.appendChild(field);
+            }
+
+            controls.appendChild(makeField('Min Group Size', numberInput(cfg.min, 0, v => {
+                cfg.min = v;
+                updateSummary(room);
+            })));
+
+            body.appendChild(controls);
+
+            if (cfg.tables.length === 0) {
+                const note = document.createElement('div');
+                note.className = 'empty-note';
+                note.textContent = 'Set the number of tables to configure this room.';
+                body.appendChild(note);
+                card.appendChild(body);
+                return card;
+            }
+
+            // Quick-fill helpers
+            const quick = document.createElement('div');
+            quick.className = 'quick';
+            quick.appendChild(spanText('Quick labels:', 'q-label'));
+            quick.appendChild(chipButton('1, 2, 3...', () => { applyLabels(room, 'numbers'); render(); }));
+            quick.appendChild(chipButton('A, B, C...', () => { applyLabels(room, 'letters'); render(); }));
+            quick.appendChild(chipButton('N... 2, 1', () => { applyLabels(room, 'reverseNumbers'); render(); }));
+            quick.appendChild(spanText('|', 'q-label'));
+            quick.appendChild(spanText('Set all seats to:', 'q-label'));
+
+            const seatBox = document.createElement('input');
+            seatBox.type = 'number';
+            seatBox.min = '0';
+            seatBox.id = 'bulkseats_' + cssId(room);
+            quick.appendChild(seatBox);
+            quick.appendChild(chipButton('Apply', () => {
+                const v = parseInt(seatBox.value, 10);
+                cfg.tables.forEach(t => t.seats = (v > 0 ? v : 0));
+                render();
+            }));
+            body.appendChild(quick);
+
+            // The per-table grid
+            const fillOrder = computeFillOrder(cfg);
+            const rank = {};
+            fillOrder.forEach((tableIdx, i) => rank[tableIdx] = i + 1);
+
+            const grid = document.createElement('table');
+            grid.className = 'tables-grid';
+            grid.innerHTML = '<tr><th>Position</th><th>Label (shown on chart)</th><th>Seats</th></tr>';
+
+            cfg.tables.forEach((t, i) => {
+                const tr = document.createElement('tr');
+
+                const posCell = document.createElement('td');
+                posCell.className = 'pos-cell';
+                posCell.innerHTML = '#' + (i + 1) +
+                    '<span class="pos-order" title="Fill priority">fill ' + rank[i] + '</span>';
+                tr.appendChild(posCell);
+
+                const labelCell = document.createElement('td');
+                const labelIn = textInput(t.label, v => { t.label = v; });
+                labelIn.className = 'label-input';
+                labelIn.placeholder = String(i + 1);
+                labelCell.appendChild(labelIn);
+                tr.appendChild(labelCell);
+
+                const seatCell = document.createElement('td');
+                const seatIn = numberInput(t.seats || '', 0, v => { t.seats = v; updateSummary(room); });
+                seatIn.className = 'seats-input';
+                seatIn.placeholder = 'any';
+                seatCell.appendChild(seatIn);
+                tr.appendChild(seatCell);
+
+                grid.appendChild(tr);
+            });
+            body.appendChild(grid);
+
+            const summary = document.createElement('div');
+            summary.className = 'summary';
+            summary.id = 'summary_' + cssId(room);
+            body.appendChild(summary);
+
+            card.appendChild(body);
+            setTimeout(() => updateSummary(room), 0);
+            return card;
+        }
+
+        function updateSummary(room) {
+            const el = document.getElementById('summary_' + cssId(room));
+            if (!el) return;
+
+            const cfg = CONFIGS[room];
+            const load = DATA.roomLoad[room] || 0;
+
+            let capped = 0, uncapped = 0, total = 0;
+            cfg.tables.forEach(t => {
+                if (t.seats > 0) { capped++; total += t.seats; } else { uncapped++; }
+            });
+
+            let text = cfg.tables.length + ' table(s). ';
+            if (uncapped > 0) {
+                text += capped > 0
+                    ? (total + ' seats across ' + capped + ' capped table(s); ' + uncapped + ' uncapped.')
+                    : 'No seat limits set — students spread evenly.';
+                el.className = 'summary';
+            } else {
+                text += total + ' seats total for a class of up to ' + load + '.';
+                el.className = (total < load) ? 'summary warn' : 'summary';
+                if (total < load) text += '  ⚠ Not enough seats — ' + (load - total) + ' student(s) would go unplaced.';
+            }
+            if (cfg.min > 0) text += '  Minimum group size ' + cfg.min + ' may reduce how many tables get used.';
+            el.textContent = text;
+        }
+
+        // --- Config mutations ------------------------------------------------
+
+        function setTableCount(room, count) {
+            const cfg = CONFIGS[room];
+            count = Math.max(0, Math.min(50, count));
+
+            while (cfg.tables.length > count) cfg.tables.pop();
+            while (cfg.tables.length < count) {
+                cfg.tables.push({ label: String(cfg.tables.length + 1), seats: 0 });
+            }
+            // A custom priority list referring to removed tables is no longer meaningful.
+            if (Array.isArray(cfg.fillPriority)) {
+                cfg.fillPriority = cfg.fillPriority.filter(p => p >= 1 && p <= count);
+            }
+        }
+
+        function applyLabels(room, mode) {
+            const tables = CONFIGS[room].tables;
+            const n = tables.length;
+            tables.forEach((t, i) => {
+                if (mode === 'numbers') t.label = String(i + 1);
+                else if (mode === 'reverseNumbers') t.label = String(n - i);
+                else if (mode === 'letters') t.label = toLetters(i);
+            });
+        }
+
+        function toLetters(i) {
+            let s = '';
+            i = i + 1;
+            while (i > 0) {
+                const rem = (i - 1) % 26;
+                s = String.fromCharCode(65 + rem) + s;
+                i = Math.floor((i - 1) / 26);
+            }
+            return s;
+        }
+
+        function defaultPriority(cfg) {
+            return cfg.tables.map((_, i) => i + 1);
+        }
+
+        // Mirrors buildFillOrder() on the server so the preview badges match the run.
+        function computeFillOrder(cfg) {
+            const n = cfg.tables.length;
+            const printOrder = [];
+            for (let i = 0; i < n; i++) printOrder.push(i);
+
+            if (cfg.fillPriority === 'reverse') return printOrder.slice().reverse();
+            if (!Array.isArray(cfg.fillPriority)) return printOrder;
+
+            const order = [];
+            const seen = {};
+            cfg.fillPriority.forEach(pos => {
+                const idx = parseInt(pos, 10) - 1;
+                if (idx >= 0 && idx < n && !seen[idx]) { seen[idx] = true; order.push(idx); }
+            });
+            printOrder.forEach(i => { if (!seen[i]) order.push(i); });
+            return order;
+        }
+
+        // --- Small DOM helpers -----------------------------------------------
+
+        function makeField(labelText, input) {
+            const div = document.createElement('div');
+            div.className = 'field';
+            const lab = document.createElement('label');
+            lab.textContent = labelText;
+            div.appendChild(lab);
+            div.appendChild(input);
+            return div;
+        }
+
+        function numberInput(value, min, onChange) {
+            const el = document.createElement('input');
+            el.type = 'number';
+            el.min = String(min);
+            el.value = (value === '' || value === null || value === undefined) ? '' : String(value);
+            el.onchange = () => onChange(parseInt(el.value, 10) || 0);
+            return el;
+        }
+
+        function textInput(value, onChange) {
+            const el = document.createElement('input');
+            el.type = 'text';
+            el.value = value || '';
+            el.onchange = () => onChange(el.value.trim());
+            return el;
+        }
+
+        function selectInput(options, selected, onChange) {
+            const el = document.createElement('select');
+            options.forEach(o => {
+                const opt = document.createElement('option');
+                opt.value = o[0];
+                opt.textContent = o[1];
+                if (o[0] === selected) opt.selected = true;
+                el.appendChild(opt);
+            });
+            el.onchange = () => onChange(el.value);
+            return el;
+        }
+
+        function chipButton(text, onClick) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'chip-btn';
+            b.textContent = text;
+            b.onclick = onClick;
+            return b;
+        }
+
+        function spanText(text, cls) {
+            const s = document.createElement('span');
+            s.className = cls || '';
+            s.textContent = text;
+            return s;
+        }
+
+        function cssId(room) {
+            return room.replace(/[^a-zA-Z0-9]/g, '_');
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // --- Save -------------------------------------------------------------
+
         function save() {
-            const form = document.getElementById('configForm');
-            const formData = {};
-            new FormData(form).forEach((value, key) => formData[key] = value);
-            
+            // Blur the focused field so its onchange lands before we read the model.
+            if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+
+            const btn = document.querySelector('.save-btn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
             google.script.run
                 .withSuccessHandler(() => google.script.host.close())
-                .saveTableConfig(formData);
+                .withFailureHandler(err => {
+                    alert('Error: ' + err);
+                    btn.disabled = false;
+                    btn.textContent = 'Save Configuration';
+                })
+                .saveTableConfig(CONFIGS);
         }
+
+        render();
     </script>
     `;
 }
@@ -375,6 +956,12 @@ function buildGenericConfigHtml(data, title) {
         
         input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #dadce0; border-radius: 4px; margin-bottom: 10px; }
         .select-freq { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #dadce0; border-radius: 4px; font-size: 13px; }
+
+        /* Preferential seating table picker */
+        .table-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .table-chip { border: 1px solid #dadce0; background: #fff; color: #3c4043; border-radius: 14px; padding: 5px 12px; font-size: 13px; cursor: pointer; user-select: none; }
+        .table-chip:hover { background: #f1f3f4; }
+        .table-chip.on { background: #1a73e8; border-color: #1a73e8; color: #fff; font-weight: 500; }
     </style>
     
     <div class="header">
@@ -426,6 +1013,7 @@ function buildGenericConfigHtml(data, title) {
 
         let currentSection = select.value;
         let selectedStudents = new Set();
+        let pendingTables = new Set(); // Preferential seating: tables toggled on in the picker
 
         function loadSection() {
             currentSection = select.value;
@@ -506,16 +1094,69 @@ function buildGenericConfigHtml(data, title) {
                 // Preferential
                 if (selectedStudents.size === 1) {
                     const name = Array.from(selectedStudents)[0];
-                    const numTables = DATA.tableConfig[SECTIONS[currentSection].room] || 0;
-                    
-                    div.innerHTML = 
-                        '<div style="margin-bottom:5px;">Table(s) for <b>' + name + '</b>:</div>' +
-                        '<input type="text" id="prefInput" placeholder="e.g. 1, 3" style="width:100%; padding:8px; box-sizing:border-box; margin-bottom:10px;">' +
-                        '<button class="action-btn" onclick="addPrefRule(\\'' + name + '\\')">Set Preference</button>';
+                    const labels = tableLabelsFor(currentSection);
+
+                    if (labels.length === 0) {
+                        div.innerHTML = '<div style="color:#d93025;">This room has no tables configured yet. Run <b>Configure Tables</b> first.</div>';
+                        return;
+                    }
+
+                    // Tables are picked from the room's actual labels, so a room
+                    // using letters or names works the same as a numbered one.
+                    const prompt = document.createElement('div');
+                    prompt.style.marginBottom = '8px';
+                    prompt.innerHTML = 'Table(s) for <b>' + name + '</b>:';
+                    div.appendChild(prompt);
+
+                    const picker = document.createElement('div');
+                    picker.className = 'table-picker';
+
+                    const existing = (CONFIG[currentSection] && CONFIG[currentSection][name]) || [];
+                    pendingTables = new Set();
+                    existing.forEach(ref => {
+                        const match = matchLabel(labels, ref);
+                        if (match !== null) pendingTables.add(match);
+                    });
+
+                    labels.forEach(lbl => {
+                        const chip = document.createElement('span');
+                        chip.className = 'table-chip' + (pendingTables.has(lbl) ? ' on' : '');
+                        chip.textContent = lbl;
+                        chip.onclick = () => {
+                            if (pendingTables.has(lbl)) pendingTables.delete(lbl);
+                            else pendingTables.add(lbl);
+                            chip.className = 'table-chip' + (pendingTables.has(lbl) ? ' on' : '');
+                        };
+                        picker.appendChild(chip);
+                    });
+                    div.appendChild(picker);
+
+                    const setBtn = document.createElement('button');
+                    setBtn.className = 'action-btn';
+                    setBtn.textContent = 'Set Preference';
+                    setBtn.onclick = () => addPrefRule(name);
+                    div.appendChild(setBtn);
                 } else {
                     div.innerHTML = '<div style="color:#888;">Select a student...</div>';
                 }
             }
+        }
+
+        // Table labels for the room the current section sits in.
+        function tableLabelsFor(section) {
+            if (!SECTIONS[section]) return [];
+            return DATA.roomTables[SECTIONS[section].room] || [];
+        }
+
+        // Matches a saved reference (a label, or a legacy 1-based position) to a label.
+        function matchLabel(labels, ref) {
+            const needle = String(ref).trim().toLowerCase();
+            for (let i = 0; i < labels.length; i++) {
+                if (labels[i].toLowerCase() === needle) return labels[i];
+            }
+            const pos = parseInt(needle, 10);
+            if (!isNaN(pos) && pos >= 1 && pos <= labels.length) return labels[pos - 1];
+            return null;
         }
 
         function addGroupRule() {
@@ -542,14 +1183,13 @@ function buildGenericConfigHtml(data, title) {
         }
 
         function addPrefRule(name) {
-            const val = document.getElementById('prefInput').value;
-            const tables = val.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n > 0);
-            
-            if (tables.length === 0) return alert('Invalid table numbers');
-            
+            const tables = Array.from(pendingTables);
+
+            if (tables.length === 0) return alert('Pick at least one table.');
+
             if (!CONFIG[currentSection]) CONFIG[currentSection] = {};
             CONFIG[currentSection][name] = tables;
-            
+
             selectedStudents.clear();
             renderStudents();
             renderRules();
@@ -872,13 +1512,18 @@ function viewAssignmentHistory() {
 
 /**
  * Creates a detailed failure report for constraint violations.
- * @param {Array} separationFailures - Array of {studentA, studentB, tableIndex, reason}
- * @param {Array} genderFailures - Array of {tableIndex, maleCount, femaleCount}
- * @param {Array} placementFailures - Array of student names that couldn't be placed
+ * @param {Array} separationFailures - Array of {studentA, studentB, tableLabel, reason}
+ * @param {Array} genderFailures - Array of {tableLabel, maleCount, femaleCount}
+ * @param {Array} placementFailures - Array of {sectionName, studentName, reason}
+ * @param {Array} [seatOverrides] - Array of {sectionName, tableLabel, reason}
+ * @param {Array} [ruleWarnings] - Array of {sectionName, message}
  * @returns {string} Human-readable failure report.
  */
-function formatFailureReport(separationFailures, genderFailures, placementFailures) {
+function formatFailureReport(separationFailures, genderFailures, placementFailures, seatOverrides, ruleWarnings) {
     let report = '';
+
+    // Falls back to the positional name for reports built before labels existed.
+    const nameOf = (f) => f.tableLabel || `Table ${f.tableIndex + 1}`;
 
     if (placementFailures.length > 0) {
         report += '⚠️ PLACEMENT FAILURES:\n';
@@ -888,10 +1533,26 @@ function formatFailureReport(separationFailures, genderFailures, placementFailur
         report += '\n';
     }
 
+    if (ruleWarnings && ruleWarnings.length > 0) {
+        report += '⚠️ RULES THAT COULD NOT BE APPLIED:\n';
+        ruleWarnings.forEach(f => {
+            report += `• [${f.sectionName}] ${f.message} \n`;
+        });
+        report += '\n';
+    }
+
+    if (seatOverrides && seatOverrides.length > 0) {
+        report += 'ℹ️ SEAT COUNTS EXCEEDED:\n';
+        seatOverrides.forEach(f => {
+            report += `• [${f.sectionName}] ${f.tableLabel} went over its seat count (${f.reason}) \n`;
+        });
+        report += '\n';
+    }
+
     if (separationFailures.length > 0) {
         report += '⚠️ SEPARATION VIOLATIONS:\n';
         separationFailures.forEach(f => {
-            report += `• [${f.sectionName}] ${f.studentA} and ${f.studentB} are at Table ${f.tableIndex + 1} \n`;
+            report += `• [${f.sectionName}] ${f.studentA} and ${f.studentB} are at ${nameOf(f)} \n`;
             if (f.reason) report += `  Reason: ${f.reason} \n`;
         });
         report += '\n';
@@ -900,7 +1561,7 @@ function formatFailureReport(separationFailures, genderFailures, placementFailur
     if (genderFailures.length > 0) {
         report += '⚠️ GENDER BALANCE ISSUES:\n';
         genderFailures.forEach(f => {
-            report += `• [${f.sectionName}] Table ${f.tableIndex + 1}: ${f.maleCount} M / ${f.femaleCount} F\n`;
+            report += `• [${f.sectionName}] ${nameOf(f)}: ${f.maleCount} M / ${f.femaleCount} F\n`;
         });
         report += '\n';
     }
@@ -914,28 +1575,28 @@ function formatFailureReport(separationFailures, genderFailures, placementFailur
  * @param {Object} studentB - Student object
  * @param {number} tableIndex - The table they're both at
  * @param {Object} prefsForSection - Preferential seating config
- * @param {number} numTables - Total number of tables
+ * @param {Object} roomConfig - Normalized room config, used to resolve table references
  * @returns {string} Explanation of why the violation persists.
  */
-function analyzeSeparationFailure(studentA, studentB, tableIndex, prefsForSection, numTables) {
+function analyzeSeparationFailure(studentA, studentB, tableIndex, prefsForSection, roomConfig) {
     const aPrefs = prefsForSection[studentA.name] || null;
     const bPrefs = prefsForSection[studentB.name] || null;
+    const label = formatTableTitle(roomConfig.tables[tableIndex] ? roomConfig.tables[tableIndex].label : String(tableIndex + 1));
+
+    // Preferences are stored as labels, so compare on resolved indices.
+    const pointsHere = (prefs) => prefs.some(ref => resolveTableIndex(ref, roomConfig) === tableIndex);
 
     // Both have prefs at same table
-    if (aPrefs && bPrefs) {
-        const aHasThis = aPrefs.includes(tableIndex + 1);
-        const bHasThis = bPrefs.includes(tableIndex + 1);
-        if (aHasThis && bHasThis) {
-            return `Both have preferential seating at Table ${tableIndex + 1} `;
-        }
+    if (aPrefs && bPrefs && pointsHere(aPrefs) && pointsHere(bPrefs)) {
+        return `Both have preferential seating at ${label} `;
     }
 
     // One is locked to this table
-    if (aPrefs && aPrefs.length === 1 && aPrefs[0] === tableIndex + 1) {
-        return `${studentA.name} is locked to Table ${tableIndex + 1} `;
+    if (aPrefs && aPrefs.length === 1 && pointsHere(aPrefs)) {
+        return `${studentA.name} is locked to ${label} `;
     }
-    if (bPrefs && bPrefs.length === 1 && bPrefs[0] === tableIndex + 1) {
-        return `${studentB.name} is locked to Table ${tableIndex + 1} `;
+    if (bPrefs && bPrefs.length === 1 && pointsHere(bPrefs)) {
+        return `${studentB.name} is locked to ${label} `;
     }
 
     return 'No valid swap found after maximum attempts';
@@ -977,7 +1638,7 @@ function confirmRandomization(data) {
     }
 
     if (data.allAssignments) {
-        writeRandomizationToSheet(data.allAssignments, data.sectionMetadata, data.failureReport);
+        writeRandomizationToSheet(data.allAssignments, data.sectionMetadata, data.failureReport, data.tableLabels);
         saveAssignmentHistory(data.allAssignments);
 
         // Save this result as the "Last Run" so it can be saved as a Golden Layout if desired
@@ -996,40 +1657,40 @@ function buildPreviewHtml(result) {
     const initialState = JSON.stringify(result);
 
     let html = `
-        < style >
-        body { font - family: 'Segoe UI', Tahoma, Geneva, Verdana, sans - serif; background - color: #f4f6f8; margin: 0; padding: 20px; }
-        .info - box { background: #e8f0fe; color: #1a73e8; padding: 10px; margin - bottom: 10px; border - radius: 4px; font - size: 13px; border: 1px solid #d2e3fc; }
-        .controls { display: flex; justify - content: flex - end; gap: 10px; margin - bottom: 20px; position: sticky; top: 0; background: #f4f6f8; padding: 10px 0; z - index: 100; border - bottom: 1px solid #ddd; }
-        button { padding: 10px 20px; font - size: 14px; border: none; border - radius: 4px; cursor: pointer; transition: background 0.2s; }
-        .accept { background - color: #34a853; color: white; font - weight: bold; }
-        .accept:hover { background - color: #2d8e47; }
-        .reroll { background - color: #4285f4; color: white; }
-        .reroll:hover { background - color: #357abd; }
-        .cancel { background - color: #ea4335; color: white; }
-        .cancel:hover { background - color: #d32f2f; }
-        .action { background - color: #9334e6; color: white; }
-        .action:hover { background - color: #7c22c7; }
-        
-        .section - container { background: white; border - radius: 8px; box - shadow: 0 1px 3px rgba(0, 0, 0, 0.1); margin - bottom: 20px; padding: 15px; }
-        .section - title { font - size: 18px; font - weight: bold; color: #202124; margin - bottom: 5px; border - bottom: 2px solid #e8eaed; padding - bottom: 5px; }
-        .section - room { font - size: 14px; color: #5f6368; margin - bottom: 15px; }
-        
-        .tables - grid { display: grid; grid - template - columns: repeat(auto - fill, minmax(140px, 1fr)); gap: 10px; }
-        .table - card { background: #f8f9fa; border: 1px solid #dadce0; border - radius: 8px; padding: 10px; min - height: 100px; display: flex; flex - direction: column; }
-        .table - header { font - weight: bold; text - align: center; color: #5f6368; margin - bottom: 8px; font - size: 12px; text - transform: uppercase; }
-        
-        .student - chip {
-        background: white; border: 1px solid #dadce0; border - radius: 16px; padding: 4px 10px; margin - bottom: 4px; font - size: 13px; color: #3c4043; cursor: grab; user - select: none; box - shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-        display: flex; justify - content: space - between; align - items: center;
-    }
-        .student - chip:hover { box - shadow: 0 2px 4px rgba(0, 0, 0, 0.1); border - color: #bdc1c6; }
-        .student - chip:active { cursor: grabbing; box - shadow: 0 4px 8px rgba(0, 0, 0, 0.2); }
-        .student - chip.dragging { opacity: 0.5; border: 1px dashed #4285f4; }
-        
-        .table - card.drag - over { background: #e8f0fe; border: 2px dashed #4285f4; }
-        
-        .warning - box { background - color: #fce8e6; border - left: 5px solid #ea4335; padding: 10px; margin - bottom: 20px; border - radius: 4px; color: #c5221f; font - size: 13px; white - space: pre - wrap; }
-    </style >
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f8; margin: 0; padding: 20px; }
+        .info-box { background: #e8f0fe; color: #1a73e8; padding: 10px; margin-bottom: 10px; border-radius: 4px; font-size: 13px; border: 1px solid #d2e3fc; }
+        .controls { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 20px; position: sticky; top: 0; background: #f4f6f8; padding: 10px 0; z-index: 100; border-bottom: 1px solid #ddd; }
+        button { padding: 10px 20px; font-size: 14px; border: none; border-radius: 4px; cursor: pointer; transition: background 0.2s; }
+        .accept { background-color: #34a853; color: white; font-weight: bold; }
+        .accept:hover { background-color: #2d8e47; }
+        .reroll { background-color: #4285f4; color: white; }
+        .reroll:hover { background-color: #357abd; }
+        .cancel { background-color: #ea4335; color: white; }
+        .cancel:hover { background-color: #d32f2f; }
+        .action { background-color: #9334e6; color: white; }
+        .action:hover { background-color: #7c22c7; }
+
+        .section-container { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); margin-bottom: 20px; padding: 15px; }
+        .section-title { font-size: 18px; font-weight: bold; color: #202124; margin-bottom: 5px; border-bottom: 2px solid #e8eaed; padding-bottom: 5px; }
+        .section-room { font-size: 14px; color: #5f6368; margin-bottom: 15px; }
+
+        .tables-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+        .table-card { background: #f8f9fa; border: 1px solid #dadce0; border-radius: 8px; padding: 10px; min-height: 100px; display: flex; flex-direction: column; }
+        .table-header { font-weight: bold; text-align: center; color: #5f6368; margin-bottom: 8px; font-size: 12px; text-transform: uppercase; }
+
+        .student-chip {
+            background: white; border: 1px solid #dadce0; border-radius: 16px; padding: 4px 10px; margin-bottom: 4px; font-size: 13px; color: #3c4043; cursor: grab; user-select: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .student-chip:hover { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); border-color: #bdc1c6; }
+        .student-chip:active { cursor: grabbing; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); }
+        .student-chip.dragging { opacity: 0.5; border: 1px dashed #4285f4; }
+
+        .table-card.drag-over { background: #e8f0fe; border: 2px dashed #4285f4; }
+
+        .warning-box { background-color: #fce8e6; border-left: 5px solid #ea4335; padding: 10px; margin-bottom: 20px; border-radius: 4px; color: #c5221f; font-size: 13px; white-space: pre-wrap; }
+    </style>
 
     <div class="info-box">
         <b>💡 Tips:</b> Drag & Drop students to swap them. Use buttons to adjust the layout.
@@ -1048,6 +1709,15 @@ function buildPreviewHtml(result) {
     <script>
         // Use the passed-in state to render the initial view
         let currentState = ${initialState};
+
+        // Mirrors formatTableTitle() on the server: bare numbers read as
+        // "Table 4", anything else is a name and is shown as-is.
+        function tableHeading(sectionName, tableIndex) {
+            const labels = currentState.tableLabels ? currentState.tableLabels[sectionName] : null;
+            const raw = (labels && labels[tableIndex] !== undefined) ? String(labels[tableIndex]).trim() : String(tableIndex + 1);
+            if (!raw) return 'Table';
+            return /^[0-9]+$/.test(raw) ? 'Table ' + raw : raw;
+        }
 
         function render() {
             const container = document.getElementById('content');
@@ -1083,10 +1753,10 @@ function buildPreviewHtml(result) {
                     card.dataset.section = sectionName;
                     card.dataset.tableIndex = tableIndex;
 
-                    // Header
+                    // Header — use the room's configured label where available
                     const hdr = document.createElement('div');
                     hdr.className = 'table-header';
-                    hdr.textContent = 'Table ' + (tableIndex + 1);
+                    hdr.textContent = tableHeading(sectionName, tableIndex);
                     card.appendChild(hdr);
 
                     // Drop Zone Handlers
@@ -1247,11 +1917,11 @@ function randomizeStudents(options = {}) {
 
     if (result.success) {
         // Write to sheet
-        writeRandomizationToSheet(result.allAssignments, result.sectionMetadata, result.failureReport);
+        writeRandomizationToSheet(result.allAssignments, result.sectionMetadata, result.failureReport, result.tableLabels);
 
         // --- FEATURE 9: Visual Map ---
         // If a visual map template exists, update it.
-        updateVisualMap(result.allAssignments);
+        updateVisualMap(result.allAssignments, result.tableLabels);
 
         // Save history
         saveAssignmentHistory(result.allAssignments);
@@ -1296,11 +1966,15 @@ function generateRandomization(options = {}) {
     const sectionData = getSectionsAndRooms(sheet);
     const allAssignments = {};
     const sectionMetadata = {}; // Maps Section Name -> Room Name
+    const allTableLabels = {};  // Maps Section Name -> [table labels, in print order]
 
     // Arrays to collect failures for the report
     const separationFailures = [];
     const genderFailures = [];
     const placementFailures = [];
+    const seatOverrides = [];      // Tables pushed past their seat count by a rule
+    const ruleWarnings = [];       // Rules that couldn't be applied as written
+    const roomCapacityNotes = {};  // Section -> "room is too small" explanation
 
     for (const sectionName in sectionData) {
         const { room: roomName, students: allStudentsInSection } = sectionData[sectionName];
@@ -1312,29 +1986,31 @@ function generateRandomization(options = {}) {
         if (activeStudents.length === 0) continue;
 
         sectionMetadata[sectionName] = roomName;
-        let numTables = tableConfig[roomName];
-        if (!numTables) {
+        const roomConfig = normalizeRoomConfig(tableConfig[roomName]);
+        if (!roomConfig || roomConfig.tables.length === 0) {
             return { success: false, error: `No table config for room "${roomName}".Skipping section "${sectionName}".` };
         }
 
-        // --- FEATURE 2: Capacity Constraints (Min Students per Table) ---
-        // If there's a minimum, we might need to use fewer tables to promote clumping.
-        if (constraintConfig[roomName] && constraintConfig[roomName].min > 0) {
-            const minPerTable = constraintConfig[roomName].min;
-            const maxTablesPossible = Math.floor(activeStudents.length / minPerTable);
+        const numTables = roomConfig.tables.length;
+        const tableLabelsForSection = roomConfig.tables.map(t => t.label);
+        allTableLabels[sectionName] = tableLabelsForSection;
 
-            // If we have 20 students and min 4, maxTables is 5.
-            // If config says 6 tables, we MUST reduce to 5 to satisfy min constraint.
-            // If we have 5 students and min 4, maxTables is 1.
-
-            if (maxTablesPossible < numTables) {
-                // If maxTablesPossible is 0 (e.g. 3 students, min 4), we fallback to 1 table.
-                numTables = Math.max(1, maxTablesPossible);
-            }
-        }
+        // Label for a table index, used in warnings and reports.
+        const labelOf = (idx) => formatTableTitle(tableLabelsForSection[idx] !== undefined ? tableLabelsForSection[idx] : String(idx + 1));
 
         const prefsForSection = preferentialConfig[sectionName] || {};
         const rawSepConfig = separatedConfig[sectionName] || [];
+
+        // Preferences are stored as table labels (older sheets stored 1-based
+        // positions). Resolve them once here so the swap helpers can work in
+        // plain indices.
+        const prefTableIndexes = {};
+        Object.keys(prefsForSection).forEach(name => {
+            const indexes = (prefsForSection[name] || [])
+                .map(ref => resolveTableIndex(ref, roomConfig))
+                .filter(i => i >= 0);
+            if (indexes.length > 0) prefTableIndexes[name] = indexes;
+        });
 
         // Split separation config into "Strict Pairs" and "Soft Groups"
         const strictPairs = new Set(); // Set of strings "A|B" (sorted)
@@ -1414,16 +2090,18 @@ function generateRandomization(options = {}) {
                 }
             }
             // Check Preferential Seating Conflict
-            if (prefsForSection) {
+            // Compared on resolved indices so a label and a legacy position that
+            // point at the same table aren't mistaken for a conflict.
+            {
                 let currentIntersect = null;
                 for (const name of group) {
-                    if (prefsForSection[name]) {
+                    if (prefTableIndexes[name]) {
                         if (currentIntersect === null) {
-                            currentIntersect = new Set(prefsForSection[name]);
+                            currentIntersect = new Set(prefTableIndexes[name]);
                         } else {
                             // Intersect current with this member's prefs
                             const newIntersect = new Set();
-                            for (const t of prefsForSection[name]) {
+                            for (const t of prefTableIndexes[name]) {
                                 if (currentIntersect.has(t)) newIntersect.add(t);
                             }
                             currentIntersect = newIntersect;
@@ -1440,6 +2118,24 @@ function generateRandomization(options = {}) {
         const pairsForSection = pairHistory[sectionName] || {}; // { StudentA: [B, C] }
         const balancingAttribute = balancingConfig[sectionName];
 
+        // --- STEP 1: Target Capacities ---
+        // Seat counts, fill priority, fill strategy and minimum group size all
+        // resolve here into a per-table target. Everything downstream just
+        // respects these numbers, so the room's shape is decided in one place.
+        const minPerTable = (constraintConfig[roomName] && constraintConfig[roomName].min > 0)
+            ? constraintConfig[roomName].min
+            : 0;
+        const capacityPlan = computeTargetCapacities(roomConfig, activeStudents.length, minPerTable);
+        const targetCapacities = capacityPlan.capacities;
+
+        // Tables actually in play this run — used for balancing maths and reporting.
+        const activeTableCount = Math.max(1, capacityPlan.tablesUsed);
+
+        if (capacityPlan.unseated > 0) {
+            const seatTotal = getRoomSeatTotal(roomConfig);
+            roomCapacityNotes[sectionName] = `Room "${roomName}" seats ${seatTotal} but ${activeStudents.length} students are present`;
+        }
+
         // --- FEATURE 7: Data Balancing Prep ---
         // Calculate max allowed students per attribute value (e.g. "High": 2, "Low": 3)
         const maxPerTableByAttribute = {};
@@ -1451,29 +2147,44 @@ function generateRandomization(options = {}) {
             });
             Object.keys(counts).forEach(val => {
                 // We allow ceiling (e.g. 10 students / 4 tables = 2.5 -> Max 3)
-                maxPerTableByAttribute[val] = Math.ceil(counts[val] / numTables);
+                maxPerTableByAttribute[val] = Math.ceil(counts[val] / activeTableCount);
             });
         }
 
         const tableAssignments = Array(numTables).fill().map(() => []);
         let studentsToRandomize = [...activeStudents];
 
-        // --- STEP 1: Preferential Seating ---
+        // --- STEP 1b: Preferential Seating ---
+        // An explicit "this student sits here" beats the seat count, so a forced
+        // placement can push a table past its cap; we just flag it in the report.
         activeStudents.forEach(student => {
-            if (prefsForSection[student.name]) {
-                const preferredTables = prefsForSection[student.name];
-                const targetTableIndex = preferredTables[Math.floor(Math.random() * preferredTables.length)] - 1;
-                if (targetTableIndex >= 0 && targetTableIndex < numTables) {
-                    tableAssignments[targetTableIndex].push(student);
-                    studentsToRandomize = studentsToRandomize.filter(s => s !== student);
-                }
+            if (!prefsForSection[student.name]) return;
+
+            const candidates = prefTableIndexes[student.name];
+            if (!candidates || candidates.length === 0) {
+                // Every table this rule names is gone (renamed or removed). The
+                // student still gets seated by the normal pass, so this is a
+                // warning about the rule, not a placement failure.
+                ruleWarnings.push({
+                    sectionName: sectionName,
+                    message: `${student.name}'s preferential seating names table(s) "${prefsForSection[student.name].join(', ')}", which don't exist in room "${roomName}" — seated at random instead`
+                });
+                return;
+            }
+
+            const targetTableIndex = candidates[Math.floor(Math.random() * candidates.length)];
+            tableAssignments[targetTableIndex].push(student);
+            studentsToRandomize = studentsToRandomize.filter(s => s !== student);
+
+            if (tableAssignments[targetTableIndex].length > targetCapacities[targetTableIndex]) {
+                targetCapacities[targetTableIndex] = tableAssignments[targetTableIndex].length;
+                seatOverrides.push({
+                    sectionName: sectionName,
+                    tableLabel: labelOf(targetTableIndex),
+                    reason: 'preferential seating'
+                });
             }
         });
-
-        // --- STEP 1b: Target Capacities ---
-        const baseSize = Math.floor(activeStudents.length / numTables);
-        const remainder = activeStudents.length % numTables;
-        const targetCapacities = Array(numTables).fill(0).map((_, i) => baseSize + (i < remainder ? 1 : 0));
 
         // --- STEP 2: Place Buddy Groups as Whole Units ---
         // This guarantees buddy groups end up together instead of relying on score bonuses.
@@ -1546,10 +2257,15 @@ function generateRandomization(options = {}) {
                     tableAssignments[bestTable].push(member);
                     placedByBuddyStep.add(member.name);
                 }
-                // Allow the table to exceed target capacity to keep buddies together
-                // (the capacity is a "target", not a hard limit)
+                // Allow the table to exceed its seat count to keep buddies together
+                // (a buddy rule is an explicit instruction, so it wins)
                 if (tableAssignments[bestTable].length > targetCapacities[bestTable]) {
                     targetCapacities[bestTable] = tableAssignments[bestTable].length;
+                    seatOverrides.push({
+                        sectionName: sectionName,
+                        tableLabel: labelOf(bestTable),
+                        reason: 'buddy group'
+                    });
                 }
             } else {
                 // Couldn't find a table with enough room — place at the table with most space
@@ -1565,6 +2281,13 @@ function generateRandomization(options = {}) {
                 for (const member of unplacedMembers) {
                     tableAssignments[fallbackTable].push(member);
                     placedByBuddyStep.add(member.name);
+                }
+                if (tableAssignments[fallbackTable].length > targetCapacities[fallbackTable]) {
+                    seatOverrides.push({
+                        sectionName: sectionName,
+                        tableLabel: labelOf(fallbackTable),
+                        reason: 'buddy group had nowhere else to fit'
+                    });
                 }
                 targetCapacities[fallbackTable] = tableAssignments[fallbackTable].length;
             }
@@ -1692,13 +2415,19 @@ function generateRandomization(options = {}) {
             }
 
             if (!placed) {
-                placementFailures.push({ sectionName: sectionName, studentName: student.name, reason: "Capacity reached/logic error" });
+                // With hard seat counts this is the expected outcome when the room
+                // is genuinely too small, so say which it is.
+                placementFailures.push({
+                    sectionName: sectionName,
+                    studentName: student.name,
+                    reason: roomCapacityNotes[sectionName] || "Every table is at capacity"
+                });
             }
             studentIdx++;
         }
 
         // --- STEP 4: Fix Separation Violations ---
-        fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection);
+        fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefTableIndexes, buddiesForSection);
 
         // Check for remaining separation violations
         const remainingViolations = findViolations(tableAssignments, strictPairs, softGroups);
@@ -1711,7 +2440,7 @@ function generateRandomization(options = {}) {
                 // If strictly 2 members, treat as pair context for analysis
                 if (v.members.length === 2 && !v.isSoft) {
                     sB = v.members[1].name;
-                    reason = analyzeSeparationFailure(v.members[0], v.members[1], v.tableIndex, prefsForSection, numTables);
+                    reason = analyzeSeparationFailure(v.members[0], v.members[1], v.tableIndex, prefsForSection, roomConfig);
                 } else {
                     // Soft Group or 3+ strict clique (legacy)
                     sB = v.members.slice(1).map(m => m.name).join(', ');
@@ -1728,19 +2457,20 @@ function generateRandomization(options = {}) {
                 studentA: sA,
                 studentB: sB,
                 tableIndex: v.tableIndex,
+                tableLabel: labelOf(v.tableIndex),
                 reason: reason
             });
         });
 
         // --- STEP 5: Fix Gender Balance ---
-        fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection);
+        fixGenderBalance(tableAssignments, strictPairs, softGroups, prefTableIndexes, buddiesForSection);
 
         // Check for gender issues
         tableAssignments.forEach((t, idx) => {
             if (getGenderTableScore(t) >= 20) {
                 let m = 0, f = 0;
                 t.forEach(s => s.gender === 'M' ? m++ : (s.gender === 'F' ? f++ : null));
-                genderFailures.push({ sectionName: sectionName, tableIndex: idx, maleCount: m, femaleCount: f });
+                genderFailures.push({ sectionName: sectionName, tableIndex: idx, tableLabel: labelOf(idx), maleCount: m, femaleCount: f });
             }
         });
 
@@ -1752,28 +2482,27 @@ function generateRandomization(options = {}) {
         allAssignments[sectionName] = tableAssignments;
     }
 
-    const failureReport = formatFailureReport(separationFailures, genderFailures, placementFailures);
+    const failureReport = formatFailureReport(separationFailures, genderFailures, placementFailures, seatOverrides, ruleWarnings);
 
     return {
         success: true,
         allAssignments: allAssignments,
         sectionMetadata: sectionMetadata,
+        tableLabels: allTableLabels,
         failureReport: failureReport
     };
 }
 
 /**
  * Writes the given assignments to the "Tables" sheet.
- */
-/**
- * Writes the given assignments to the "Tables" sheet.
  * Optimized to use batch operations for performance.
+ *
+ * @param {Object} allAssignments - { section: [[student, ...], ...] }
+ * @param {Object} sectionMetadata - { section: roomName }
+ * @param {string} failureReport - Warning text, or falsy for none.
+ * @param {Object} [tableLabels] - { section: [label, ...] }. Falls back to "Table N".
  */
-/**
- * Writes the given assignments to the "Tables" sheet.
- * Optimized to use batch operations for performance.
- */
-function writeRandomizationToSheet(allAssignments, sectionMetadata, failureReport) {
+function writeRandomizationToSheet(allAssignments, sectionMetadata, failureReport, tableLabels) {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     let outputSheet = spreadsheet.getSheetByName("Tables");
     if (!outputSheet) {
@@ -1815,6 +2544,7 @@ function writeRandomizationToSheet(allAssignments, sectionMetadata, failureRepor
         sectionLayouts.push({
             name: sectionName,
             room: sectionMetadata[sectionName],
+            labels: (tableLabels && tableLabels[sectionName]) ? tableLabels[sectionName] : null,
             assignments: tableAssignments,
             startRow: totalRows, // 0-based relative to data block
             halfTables: halfTables,
@@ -1873,10 +2603,14 @@ function writeRandomizationToSheet(allAssignments, sectionMetadata, failureRepor
         const tables = layout.assignments;
         const half = layout.halfTables;
 
+        // Table headings come from the room's configured labels when we have them.
+        const headingFor = (t) =>
+            formatTableTitle(layout.labels && layout.labels[t] !== undefined ? layout.labels[t] : String(t + 1));
+
         // Front Tables (Row 1 of section tables)
         for (let t = 0; t < half; t++) {
             // Header
-            values[r][t] = `Table ${t + 1}`;
+            values[r][t] = headingFor(t);
             fontWeights[r][t] = 'bold';
             fontSizes[r][t] = fontSizeBody;
 
@@ -1900,7 +2634,7 @@ function writeRandomizationToSheet(allAssignments, sectionMetadata, failureRepor
         for (let t = half; t < tables.length; t++) {
             const colIdx = t - half;
             // Header
-            values[r][colIdx] = `Table ${t + 1}`;
+            values[r][colIdx] = headingFor(t);
             fontWeights[r][colIdx] = 'bold';
             fontSizes[r][colIdx] = fontSizeBody;
 
@@ -2098,6 +2832,8 @@ function loadLayoutByName(layoutName) {
     const sectionData = getSectionsAndRooms(sheet); // { SectionName: { room, students: [{name}] } }
 
     const validatedAssignments = {};
+    const tableLabels = {};
+    const tableConfig = JSON.parse(properties.getProperty('tableConfig') || '{}');
     let failureReport = "Loaded from layout: " + layoutName + "\n";
     let hasIssues = false;
 
@@ -2133,12 +2869,22 @@ function loadLayoutByName(layoutName) {
         }
 
         validatedAssignments[sectionName] = newTables;
+
+        // Prefer the room's CURRENT labels so a renamed table shows its new name;
+        // fall back to whatever the layout was saved with.
+        const roomConfig = normalizeRoomConfig(tableConfig[sectionData[sectionName].room]);
+        if (roomConfig) {
+            tableLabels[sectionName] = roomConfig.tables.map(t => t.label);
+        } else if (layoutData.tableLabels && layoutData.tableLabels[sectionName]) {
+            tableLabels[sectionName] = layoutData.tableLabels[sectionName];
+        }
     }
 
     const result = {
         success: true,
         allAssignments: validatedAssignments,
         sectionMetadata: layoutData.sectionMetadata,
+        tableLabels: tableLabels,
         failureReport: hasIssues ? failureReport : null
     };
 
@@ -2333,24 +3079,26 @@ function generateMapTemplate() {
     if (!sheet) return;
     const sectionData = getSectionsAndRooms(sheet);
 
+    const properties = PropertiesService.getDocumentProperties();
+    const tableConfig = JSON.parse(properties.getProperty('tableConfig') || '{}');
+
     let currentRow = 2;
     // For each section, print instructions and placeholders
     for (const sectionName in sectionData) {
         const roomName = sectionData[sectionName].room;
-        const properties = PropertiesService.getDocumentProperties();
-        const storedConfig = properties.getProperty('tableConfig');
-        const config = JSON.parse(storedConfig || '{}');
-        const numTables = config[roomName] || 5; // Default to 5 if unknown
+        const roomConfig = normalizeRoomConfig(tableConfig[roomName]) || normalizeRoomConfig(5); // Default to 5 if unknown
 
-        mapSheet.getRange(currentRow, 1).setValue(`-- - ${sectionName} (${roomName})--- `).setFontWeight('bold');
+        mapSheet.getRange(currentRow, 1).setValue(`--- ${sectionName} (${roomName}) ---`).setFontWeight('bold');
         currentRow += 2;
 
-        for (let i = 1; i <= numTables; i++) {
-            // Placeholders: {{SectionName|TableIndex}}
-            // We use a pipe or unique separator
-            mapSheet.getRange(currentRow, 1).setValue(`{ {${sectionName}| ${i} } } `).setBackground('#FFF2CC').setBorder(true, true, true, true, null, null);
+        roomConfig.tables.forEach(table => {
+            // Placeholders: {{SectionName|TableLabel}}
+            mapSheet.getRange(currentRow, 1)
+                .setValue(`{{${sectionName}|${table.label}}}`)
+                .setBackground('#FFF2CC')
+                .setBorder(true, true, true, true, null, null);
             currentRow += 6; // Leave space for students
-        }
+        });
         currentRow += 4;
     }
 
@@ -2360,8 +3108,12 @@ function generateMapTemplate() {
 
 /**
  * Updates the Visual Map sheet by finding placeholders and listing students.
+ *
+ * @param {Object} allAssignments - { section: [[student, ...], ...] }
+ * @param {Object} [tableLabels] - { section: [label, ...] }, used to resolve
+ *                                 placeholders written with a table's label.
  */
-function updateVisualMap(allAssignments) {
+function updateVisualMap(allAssignments, tableLabels) {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     const mapSheet = spreadsheet.getSheetByName("Visual Map");
     if (!mapSheet) return; // Feature inactive if sheet missing
@@ -2373,17 +3125,32 @@ function updateVisualMap(allAssignments) {
 
     const dataRange = mapSheet.getDataRange();
     const values = dataRange.getValues();
-    const clears = [];
+
+    // Placeholders name a table by its label ("{{Period 2|C}}"). Older maps used
+    // a 1-based position, which still resolves when no label matches.
+    const indexFromRef = (sectionName, ref) => {
+        const needle = String(ref).trim().toLowerCase();
+        const labels = (tableLabels && tableLabels[sectionName]) ? tableLabels[sectionName] : null;
+
+        if (labels) {
+            for (let i = 0; i < labels.length; i++) {
+                if (String(labels[i]).trim().toLowerCase() === needle) return i;
+            }
+        }
+        const pos = parseInt(needle, 10);
+        return isNaN(pos) ? -1 : pos - 1;
+    };
 
     // 2. Find Placeholders
     for (let r = 0; r < values.length; r++) {
         for (let c = 0; c < values[r].length; c++) {
             const cellVal = String(values[r][c]);
-            const match = cellVal.match(/\{\{([^|]+)\|(\d+)\}\}/); // Matches {{Section|1}}
+            const match = cellVal.match(/\{\{([^|]+)\|([^}]+)\}\}/); // Matches {{Section|C}} or {{Section|1}}
 
             if (match) {
-                const sectionName = match[1];
-                const tableIndex = parseInt(match[2]) - 1; // 0-based
+                const sectionName = match[1].trim();
+                const tableIndex = indexFromRef(sectionName, match[2]);
+                if (tableIndex < 0) continue;
 
                 // Clear 10 rows below
                 // We use a helper to batch clears? GAS is slow with individual calls.
@@ -2410,10 +3177,10 @@ function updateVisualMap(allAssignments) {
  * @param {Array<Array<Object>>} tableAssignments
  * @param {Set<string>} strictPairs - Set of "A|B" names
  * @param {Array<Object>} softGroups - [{namesSet, original}]
- * @param {Object} prefsForSection
+ * @param {Object} prefTableIndexes - { studentName: [0-based table indices] }
  * @returns {boolean} True if all violations were resolved, otherwise false.
  */
-function fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection) {
+function fixSeparationViolations(tableAssignments, strictPairs, softGroups, prefTableIndexes, buddiesForSection) {
     if (strictPairs.size === 0 && softGroups.length === 0) return true;
 
     // Reduced attempts for performance. Smart swapping > brute force.
@@ -2447,7 +3214,7 @@ function fixSeparationViolations(tableAssignments, strictPairs, softGroups, pref
                 const destStudents = shuffleArray(destTable);
 
                 for (const studentToSwap of destStudents) {
-                    if (isSwapValid(studentToMove, studentToSwap, tableAssignments[violation.tableIndex], destTable, strictPairs, softGroups, prefsForSection, violation.tableIndex, otherTableIdx, buddiesForSection)) {
+                    if (isSwapValid(studentToMove, studentToSwap, tableAssignments[violation.tableIndex], destTable, strictPairs, softGroups, prefTableIndexes, violation.tableIndex, otherTableIdx, buddiesForSection)) {
 
                         // Perform Swap
                         const sourceTable = tableAssignments[violation.tableIndex];
@@ -2472,7 +3239,7 @@ function fixSeparationViolations(tableAssignments, strictPairs, softGroups, pref
  * Attempts to improve the total "Gender Score".
  * Optimized with lower attempt count.
  */
-function fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSection, buddiesForSection) {
+function fixGenderBalance(tableAssignments, strictPairs, softGroups, prefTableIndexes, buddiesForSection) {
     const MAX_ATTEMPTS = 1000; // Reduced from 5000 for performance
     const populatedTables = [];
     tableAssignments.forEach((table, index) => {
@@ -2498,7 +3265,7 @@ function fixGenderBalance(tableAssignments, strictPairs, softGroups, prefsForSec
 
         const scoreBefore = getGenderTableScore(tableA) + getGenderTableScore(tableB);
 
-        if (isSwapValid(studentA, studentB, tableA, tableB, strictPairs, softGroups, prefsForSection, tableA_wrapper.index, tableB_wrapper.index, buddiesForSection)) {
+        if (isSwapValid(studentA, studentB, tableA, tableB, strictPairs, softGroups, prefTableIndexes, tableA_wrapper.index, tableB_wrapper.index, buddiesForSection)) {
             tableA[sA_idx] = studentB;
             tableB[sB_idx] = studentA;
             const scoreAfter = getGenderTableScore(tableA) + getGenderTableScore(tableB);
@@ -2622,10 +3389,12 @@ function findViolations(tableAssignments, strictPairs, softGroups) {
 /**
  * Master Gatekeeper for Swaps.
  */
-function isSwapValid(studentToMove, studentToTakePlace, sourceTable, destTable, strictPairs, softGroups, prefsForSection, sourceTableIndex, destTableIndex, buddiesForSection) {
-    if (prefsForSection) {
-        if (prefsForSection[studentToMove.name] && !prefsForSection[studentToMove.name].includes(destTableIndex + 1)) return false;
-        if (prefsForSection[studentToTakePlace.name] && !prefsForSection[studentToTakePlace.name].includes(sourceTableIndex + 1)) return false;
+function isSwapValid(studentToMove, studentToTakePlace, sourceTable, destTable, strictPairs, softGroups, prefTableIndexes, sourceTableIndex, destTableIndex, buddiesForSection) {
+    // prefTableIndexes holds 0-based table indices already resolved from the
+    // saved labels, so these are plain index comparisons.
+    if (prefTableIndexes) {
+        if (prefTableIndexes[studentToMove.name] && !prefTableIndexes[studentToMove.name].includes(destTableIndex)) return false;
+        if (prefTableIndexes[studentToTakePlace.name] && !prefTableIndexes[studentToTakePlace.name].includes(sourceTableIndex)) return false;
     }
 
     // --- Buddy Checks ---
@@ -3012,7 +3781,7 @@ function buildTutorialHtml() {
         <div style="font-weight:bold; margin-bottom:10px;">🛡️ Rules & Constraints</div>
         <details>
             <summary>Preferential Seating</summary>
-            <div style="margin-top:5px;">Ensure specific students always get one of their favorite tables (e.g. front row).</div>
+            <div style="margin-top:5px;">Ensure specific students always get one of their favorite tables (e.g. front row). A forced placement outranks the table's seat count; the report notes when that happens.</div>
         </details>
         <details>
             <summary>Student Separations</summary>
@@ -3045,7 +3814,17 @@ function buildTutorialHtml() {
     <div class="section-title">Configuration</div>
     <div class="menu-item">
         <div class="menu-name">Configure Tables (Groups)</div>
-        <div class="menu-desc"><b>Required.</b> Set how many tables are in each room (e.g. 6 tables).</div>
+        <div class="menu-desc">
+            <b>Required.</b> Everything about a room's tables lives here:
+            <ul>
+                <li><b># Tables</b> &mdash; how many table groups the room has. They print left-to-right in the listed order.</li>
+                <li><b>Label</b> &mdash; what each table is called on the chart. A number, a letter, or a name like "Window Bench".</li>
+                <li><b>Seats</b> &mdash; a hard cap on that table. Leave blank for no limit. Students beyond the room's total seats are reported rather than squeezed in.</li>
+                <li><b>Fill Priority</b> &mdash; which tables get students first, <i>independently</i> of print order. Use <b>Reverse</b> for a room whose physical numbering runs backwards, or <b>Custom</b> to type your own order.</li>
+                <li><b>Fill Strategy</b> &mdash; <i>Spread</i> keeps every table as even as possible; <i>Pack</i> fills each table to its seat count in priority order and leaves the rest empty.</li>
+                <li><b>Min Group Size</b> &mdash; keeps groups from getting too small by using fewer tables. Tables drop off the end of the fill priority.</li>
+            </ul>
+        </div>
     </div>
     <div class="menu-item">
         <div class="menu-name">Configure Data Balancing</div>
@@ -3055,10 +3834,6 @@ function buildTutorialHtml() {
         </div>
     </div>
     <div class="menu-item">
-        <div class="menu-name">Set Room Constraints</div>
-        <div class="menu-desc">Set the maximum capacity of specific tables (e.g. Table 1 only has 3 chairs).</div>
-    </div>
-    <div class="menu-item">
         <div class="menu-name">Select Absent Students</div>
         <div class="menu-desc">Temporarily exclude students from the next randomization without deleting them.</div>
     </div>
@@ -3066,7 +3841,7 @@ function buildTutorialHtml() {
     <div class="section-title">Student Rules</div>
     <div class="menu-item">
         <div class="menu-name">Preferential Seating</div>
-        <div class="menu-desc">Force specific students to be always at Table 1 (e.g. for vision issues).</div>
+        <div class="menu-desc">Pin specific students to one or more tables (e.g. for vision issues). Pick the tables from the room's own labels.</div>
     </div>
     <div class="menu-item">
         <div class="menu-name">Student Separations</div>
