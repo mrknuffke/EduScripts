@@ -1949,6 +1949,45 @@ body.screen-summary #screen-summary { display: block; }
     };
   }
 
+  // --- STUDENT NAME RESOLUTION ---
+  function getEffectiveName(card) {
+    if (!card) return '';
+    const roster = (card.name || '').trim();
+    const pref = (card.preferredName || '').trim();
+
+    if (!pref) {
+      return roster || 'Unknown Student';
+    }
+
+    if (!roster || roster === 'Unknown Student') {
+      return pref;
+    }
+
+    // If preferred name already contains spaces (full name provided), use it directly
+    if (pref.includes(' ')) {
+      return pref;
+    }
+
+    const rosterTokens = roster.split(/\s+/).filter(Boolean);
+    if (rosterTokens.length <= 1) {
+      return pref;
+    }
+
+    // If preferred name matches one of the given/middle name tokens after the first token (e.g. "Yip Han Wong" with pref "Han")
+    const lowerPref = pref.toLowerCase();
+    const matchIdx = rosterTokens.slice(1).findIndex(t => t.toLowerCase() === lowerPref);
+    if (matchIdx >= 0) {
+      const remainingTokens = rosterTokens.slice(matchIdx + 2);
+      const lastName = remainingTokens.length > 0 ? remainingTokens.join(' ') : rosterTokens[rosterTokens.length - 1];
+      return `${pref} ${lastName}`;
+    }
+
+    // Standard case: replace first given name with preferred name
+    // E.g. "Abigail Wang" -> "Abby Wang", "Sebastian Hehir" -> "Seb Hehir"
+    const lastName = rosterTokens.slice(1).join(' ');
+    return `${pref} ${lastName}`;
+  }
+
   // --- NORMALISATION & LEVENSHTEIN (§6) ---
   function normalizeString(str) {
     if (!str) return '';
@@ -2028,29 +2067,37 @@ body.screen-summary #screen-summary { display: block; }
   }
 
   function gradeAnswer(inputStr, card) {
+    const effectiveName = getEffectiveName(card);
     const normInput = normalizeString(inputStr);
-    if (!normInput) return { outcome: 'miss', targetSpelling: card.name };
+    if (!normInput) return { outcome: 'miss', targetSpelling: effectiveName };
 
-    const targetFull = card.preferredName || card.name;
-    const normTargetFull = normalizeString(targetFull);
+    const normEffectiveFull = normalizeString(effectiveName);
     const normRosterFull = normalizeString(card.name);
+    const normPref = card.preferredName ? normalizeString(card.preferredName) : '';
 
-    // 1. Full name match check (against preferred or roster name)
-    const distFull = levenshtein(normInput, normTargetFull);
+    // 1. Full name match check (against effective full name, roster full name, or preferredName)
+    const distEffective = levenshtein(normInput, normEffectiveFull);
     const distRoster = levenshtein(normInput, normRosterFull);
+    const distPref = normPref ? levenshtein(normInput, normPref) : Infinity;
 
-    if (distFull <= allowedEdits(normTargetFull.length) || distRoster <= allowedEdits(normRosterFull.length)) {
-      return { outcome: 'correct', targetSpelling: card.name };
+    if (
+      distEffective <= allowedEdits(normEffectiveFull.length) ||
+      distRoster <= allowedEdits(normRosterFull.length) ||
+      (normPref && distPref <= allowedEdits(normPref.length))
+    ) {
+      return { outcome: 'correct', targetSpelling: effectiveName };
     }
 
     // 2. Single token match check
-    const tokens = normTargetFull.split(' ').concat(normRosterFull.split(' '));
+    const tokens = normEffectiveFull.split(' ')
+      .concat(normRosterFull.split(' '))
+      .concat(normPref ? normPref.split(' ') : []);
     const uniqueTokens = Array.from(new Set(tokens.filter(t => t.length > 0)));
 
     for (const token of uniqueTokens) {
       const distToken = levenshtein(normInput, token);
       if (distToken <= allowedEdits(token.length)) {
-        return { outcome: 'partial', targetSpelling: card.name };
+        return { outcome: 'partial', targetSpelling: effectiveName };
       }
     }
 
@@ -2073,11 +2120,11 @@ body.screen-summary #screen-summary { display: block; }
         }
       }
       if (allTokensMatched) {
-        return { outcome: 'partial', targetSpelling: card.name };
+        return { outcome: 'partial', targetSpelling: effectiveName };
       }
     }
 
-    return { outcome: 'miss', targetSpelling: card.name };
+    return { outcome: 'miss', targetSpelling: effectiveName };
   }
 
   // --- SCHEDULER (LEITNER §7) ---
@@ -2355,7 +2402,7 @@ body.screen-summary #screen-summary { display: block; }
         <img src="${card.photo}" class="import-photo-thumb" alt="Thumb">
         <div class="import-card-name">${escapeHtml(card.name)}</div>
         <div class="import-card-pref-wrapper">
-          <input type="text" class="input-text sm import-preferred-input" data-idx="${idx}" placeholder="Preferred Name" value="${escapeHtml(card.preferredName || '')}">
+          <input type="text" class="input-text sm import-preferred-input" data-idx="${idx}" placeholder="Preferred Name (e.g. Abby)" value="${escapeHtml(card.preferredName || '')}">
         </div>
         ${card.warning ? `<div class="import-card-status">${escapeHtml(card.warning)}</div>` : ''}
       `;
@@ -2387,22 +2434,18 @@ body.screen-summary #screen-summary { display: block; }
       const remainingItems = activeSession.queue.slice(activeSession.currentIndex);
       remainingItems.forEach(item => {
         const c = item.card;
-        if (c.name && c.name !== 'Unknown Student') {
-          names.add(c.name);
-        }
-        if (c.preferredName) {
-          names.add(c.preferredName);
+        const effective = getEffectiveName(c);
+        if (effective && effective !== 'Unknown Student') {
+          names.add(effective);
         }
       });
     } else if (decks) {
       decks.forEach(d => {
         if (d.cards) {
           d.cards.forEach(c => {
-            if (c.name && c.name !== 'Unknown Student') {
-              names.add(c.name);
-            }
-            if (c.preferredName) {
-              names.add(c.preferredName);
+            const effective = getEffectiveName(c);
+            if (effective && effective !== 'Unknown Student') {
+              names.add(effective);
             }
           });
         }
@@ -2410,7 +2453,7 @@ body.screen-summary #screen-summary { display: block; }
     }
 
     datalist.innerHTML = Array.from(names)
-      .sort()
+      .sort((a, b) => a.localeCompare(b))
       .map(n => `<option value="${escapeHtml(n)}"></option>`)
       .join('');
   }
@@ -2496,7 +2539,7 @@ body.screen-summary #screen-summary { display: block; }
     recordCardResult('miss');
 
     const feedbackEl = document.getElementById('study-feedback-area');
-    feedbackEl.innerHTML = `<span class="feedback-badge missed">✗ Missed</span> Correct Answer: <span class="feedback-target">${escapeHtml(currentItem.card.name)}</span>`;
+    feedbackEl.innerHTML = `<span class="feedback-badge missed">✗ Missed</span> Correct Answer: <span class="feedback-target">${escapeHtml(getEffectiveName(currentItem.card))}</span>`;
 
     const inputEl = document.getElementById('study-input');
     inputEl.disabled = true;
@@ -2789,7 +2832,7 @@ body.screen-summary #screen-summary { display: block; }
         rowEl.innerHTML = `
           <div class="missed-card-info">
             <img src="${item.card.photo}" class="missed-card-thumb" alt="Thumb">
-            <span class="missed-card-name">${escapeHtml(item.card.name)}</span>
+            <span class="missed-card-name">${escapeHtml(getEffectiveName(item.card))}</span>
           </div>
           <button class="btn danger btn-delete-card" data-card-id="${item.card.id}">Delete Card</button>
         `;
@@ -2853,10 +2896,10 @@ body.screen-summary #screen-summary { display: block; }
 
       if (isEditing) {
         cardEl.innerHTML = `
-          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
+          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(getEffectiveName(card))}">
           <div class="grid-student-edit-box">
-            <div class="grid-edit-roster-name" title="${escapeHtml(card.name)}">${escapeHtml(card.name)}</div>
-            <input type="text" class="input-text sm grid-pref-input" placeholder="Preferred Name" value="${escapeHtml(card.preferredName || '')}">
+            <div class="grid-edit-roster-name" title="Legal: ${escapeHtml(card.name)}">Legal: ${escapeHtml(card.name)}</div>
+            <input type="text" class="input-text sm grid-pref-input" placeholder="Preferred Name (e.g. Abby)" value="${escapeHtml(card.preferredName || '')}">
             <div class="grid-edit-btn-row">
               <button type="button" class="btn primary sm btn-save-pref" title="Save preferred name">✓ Save</button>
               <button type="button" class="btn secondary sm btn-cancel-pref" title="Cancel">✕</button>
@@ -2900,12 +2943,14 @@ body.screen-summary #screen-summary { display: block; }
 
         setTimeout(() => prefInput.focus(), 50);
       } else {
-        const prefText = card.preferredName ? `<div class="grid-student-pref-name">"${escapeHtml(card.preferredName)}"</div>` : '';
+        const effectiveName = getEffectiveName(card);
+        const hasPref = card.preferredName && card.preferredName.trim().length > 0 && effectiveName !== card.name;
+        const legalSub = hasPref ? `<div class="grid-student-pref-name">Legal: ${escapeHtml(card.name)}</div>` : '';
         cardEl.innerHTML = `
-          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(card.name)}">
+          <img src="${card.photo}" class="grid-student-photo" alt="Photo of ${escapeHtml(effectiveName)}">
           <div class="grid-student-name-wrapper ${isHidden ? 'hidden-name' : ''}">
-            <div class="grid-student-name">${escapeHtml(card.name)}</div>
-            ${prefText}
+            <div class="grid-student-name">${escapeHtml(effectiveName)}</div>
+            ${legalSub}
             <button type="button" class="grid-edit-pencil" title="Edit preferred name" data-id="${card.id}">✏️</button>
           </div>
           <div class="grid-box-tag">Box ${card.box || 1}</div>
