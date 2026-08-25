@@ -13,15 +13,22 @@ cd "$(dirname "$0")/.."
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-python3 - "$WORK/roster.js" <<'PY'
+python3 - "$WORK/extracted.js" <<'PY'
 import io, sys
 src = io.open("ReportScript.gs", encoding="utf-8").read()
-start = src.index("// --- ROSTER SCANNING")
-end = src.index("/**\n * Scans the sheet and opens the Student Selector Dialog")
-io.open(sys.argv[1], "w", encoding="utf-8").write(src[start:end])
+
+def slice_between(start_marker, end_marker):
+    start = src.index(start_marker)
+    return src[start:src.index(end_marker, start)]
+
+roster = slice_between("// --- ROSTER SCANNING",
+                       "/**\n * Scans the sheet and opens the Student Selector Dialog")
+selector = slice_between("function buildStudentSelectorHtml",
+                         "\n/**\n * Shows the tutorial sidebar.")
+io.open(sys.argv[1], "w", encoding="utf-8").write(roster + "\n" + selector + "\n")
 PY
 
-cat "$WORK/roster.js" test/fixtures.js test/assertions.js > "$WORK/suite.js"
+cat "$WORK/extracted.js" test/fixtures.js test/assertions.js > "$WORK/suite.js"
 
 if command -v node >/dev/null 2>&1; then
   node "$WORK/suite.js"

@@ -14,7 +14,7 @@ Gradebook Reporter is a Google Apps Script utility that generates individual stu
 -   **Missing Work Logic**: Intelligently suppresses "Congratulations" messages if summary stats indicate missing assignments, even if individual items aren't flagged.
 -   **Robust Handling**: Works on gradebooks with or without a "Standards" row, automatically falling back to simpler grouping methods.
 -   **Layout-Agnostic Roster Parsing**: Nothing about the roster is hard-coded to a fixed row or column. The script finds the roster header row by its labels (it does not have to be Row 2), reads student data from the row below it, and identifies checkbox columns so Sheets' `TRUE`/`FALSE` display values are never mistaken for section names or graded work. A row is treated as a student only if it has a name plus real evidence of a person (an email, a parent email, graded work, or a `Last, First` name), so course titles and banner rows become section headings instead of phantom students.
--   **Email Reports**: Sends personalized HTML emails to students with their grades and missing assignment alerts.
+-   **Email Reports**: Sends personalized HTML emails to students with their grades and missing assignment alerts. Parent/guardian destinations are offered only when the sheet actually contains parent addresses - if that column is absent or entirely blank, the choice is hidden and reports go to students.
 -   **Drive Reports**: Generates a single Google Doc with page breaks between student reports.
 -   **Student Selector**: A UI dialog that groups students into one collapsible card per class section, with a section filter, per-section select-all, and a live count of what's selected.
 -   **Preview Mode**: Preview up to 10 reports with clear separation to verify layout before sending.
@@ -45,7 +45,7 @@ Gradebook Reporter is a Google Apps Script utility that generates individual stu
 -   Use `Gradebook Tools` > `Generate Demo Gradebook` to see the expected format.
 
 ## Testing
-Apps Script cannot be run locally, so the roster-parsing logic is covered by fixture sheets that mirror real gradebook layouts (checkbox columns, merged banner dividers, roster headers below the assignment header, per-row section columns, unstyled headings).
+Apps Script cannot be run locally, so the roster-parsing logic is covered by fixture sheets that mirror real gradebook layouts (checkbox columns, merged banner dividers, roster headers below the assignment header, per-row section columns, unstyled headings). The Student Selector dialog is covered too: the suite stubs `HtmlService`, compiles the template the way Apps Script does, and asserts against the rendered HTML, so the `<? ?>` scriptlets are executed rather than eyeballed.
 
 ```bash
 ./test/run-tests.sh

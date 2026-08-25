@@ -84,6 +84,46 @@ var f = scan("5. No sections at all", FLAT);
 check("Flat: single Ungrouped bucket", f.names, ["Ungrouped"]);
 check("Flat: 2 students", f.roster.students.length, 2);
 
+// =================== selector dialog rendering ==============================
+out.push("\n== 6. Selector dialog ==");
+
+var withParents = renderSelector(DIALOG_SECTIONS, 'email', true);
+check("dialog: two section cards", (withParents.match(/class="section-card"/g) || []).length, 2);
+check("dialog: three student rows", (withParents.match(/class="stu-chk /g) || []).length, 3);
+check("dialog: section names rendered",
+  withParents.indexOf('AP Biology - Block 3') > -1 && withParents.indexOf('AP Biology - Block 5') > -1, true);
+check("dialog: counts pluralised",
+  withParents.indexOf('2 students') > -1 && withParents.indexOf('1 student<') > -1, true);
+check("dialog: filter chips are All + one per section", (withParents.match(/class="chip/g) || []).length, 3);
+check("dialog: sheet row indices preserved",
+  withParents.indexOf('value="4"') > -1 && withParents.indexOf('value="8"') > -1, true);
+check("dialog: mismatch badge rendered once", (withParents.match(/class="badge badge-warn"/g) || []).length, 1);
+check("dialog: missing address shows None", withParents.indexOf('<i class="none">None</i>') > -1, true);
+check("dialog: apostrophe in name escaped", withParents.indexOf("O&#39;Brien") > -1, true);
+check("dialog: every student tagged with its section", (withParents.match(/data-section="sec-/g) || []).length, 3);
+
+// With parent addresses present, all three destinations are offered.
+check("parents present: three destination pills", (withParents.match(/class="dest-pill/g) || []).length, 3);
+check("parents present: Parent Only offered", withParents.indexOf('Parent Only') > -1, true);
+check("parents present: parent line shown per student", (withParents.match(/Parent:/g) || []).length, 3);
+check("parents present: no forced default", withParents.indexOf('value="student" checked hidden'), -1);
+
+// Universally blank parent column: the choice disappears rather than misleading.
+var noParents = renderSelector(DIALOG_SECTIONS, 'email', false);
+check("no parents: destination pills removed", (noParents.match(/class="dest-pill/g) || []).length, 0);
+check("no parents: Parent Only not offered", noParents.indexOf('Parent Only'), -1);
+check("no parents: Both not offered", noParents.indexOf('>✉️ Both<'), -1);
+check("no parents: reason shown", noParents.indexOf('reports go to students only') > -1, true);
+check("no parents: per-student parent line dropped", noParents.indexOf('Parent:'), -1);
+check("no parents: student-only destination forced", noParents.indexOf('value="student" checked hidden') > -1, true);
+check("no parents: students still listed", (noParents.match(/class="stu-chk /g) || []).length, 3);
+check("no parents: sections still grouped", (noParents.match(/class="section-card"/g) || []).length, 2);
+
+var drive = renderSelector(DIALOG_SECTIONS, 'drive', false);
+check("drive mode: no destination section", (drive.match(/class="dest-pill/g) || []).length, 0);
+check("drive mode: student-only still forced for preview",
+  drive.indexOf('value="student" checked hidden') > -1, true);
+
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));
 console.log(out.join("\n"));

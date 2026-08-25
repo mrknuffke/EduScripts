@@ -518,8 +518,14 @@ function showStudentSelector(mode) {
 
   const sections = groupStudentsBySection(roster.students, roster.sections);
 
+  // Offering "Parent" destinations is pointless when the sheet holds no parent
+  // addresses, whether the column is absent or present but entirely empty.
+  const hasParentEmails = roster.students.some(function (s) {
+    return s.parentEmail.indexOf('@') > -1;
+  });
+
   // Generate and Show UI
-  const html = buildStudentSelectorHtml(sections, mode);
+  const html = buildStudentSelectorHtml(sections, mode, hasParentEmails);
   SpreadsheetApp.getUi().showModalDialog(html.setWidth(600).setHeight(700), 'Student Selector');
 }
 
@@ -881,16 +887,20 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
 
     else if (mode === 'preview') {
       if (previewCount >= 10) continue;
-      const studentEmail = (emailColIndex > -1) ? row[emailColIndex] : "No Student Email";
-      const parentEmail = (parentEmailColIndex > -1) ? row[parentEmailColIndex] : "No Parent Email";
-      
+      const studentEmail = (emailColIndex > -1) ? row[emailColIndex] : "";
+      const parentEmail = (parentEmailColIndex > -1) ? row[parentEmailColIndex] : "";
+
+      // Test for a real address: a missing column used to yield the non-empty
+      // placeholder "No Parent Email", which previewed as a sendable parent.
       const showStudent = (emailDest === 'student' || emailDest === 'both');
-      const showParent = (emailDest === 'parent' || emailDest === 'both') && parentEmail !== "";
+      const showParent = (emailDest === 'parent' || emailDest === 'both') &&
+                         parentEmail.indexOf('@') > -1;
+      const studentEmailLabel = studentEmail.indexOf('@') > -1 ? studentEmail : "No Student Email";
 
       if (showStudent) {
         const htmlBody = generateHtmlReport(titlePrefix, studentName, reportRows, isStudentInTrouble, subjectName, coolMessages, false);
         previewHtml += `<div class="preview-box" style="margin-bottom: 40px; border-bottom: 4px solid #ccc; padding-bottom: 40px; background-color: #fcfcfc; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                          <div class="preview-header" style="background-color: #1a73e8; color: white; padding: 8px 12px; font-weight: bold; border-radius: 4px 4px 0 0; margin-bottom: 15px;">STUDENT PREVIEW ${previewCount + 1}: ${studentName} (${studentEmail})</div>
+                          <div class="preview-header" style="background-color: #1a73e8; color: white; padding: 8px 12px; font-weight: bold; border-radius: 4px 4px 0 0; margin-bottom: 15px;">STUDENT PREVIEW ${previewCount + 1}: ${studentName} (${studentEmailLabel})</div>
                           ${htmlBody}
                         </div>`;
       }
@@ -1201,7 +1211,7 @@ function generateHtmlTables(rows) {
 /**
  * Builds the HTML interface for student selection.
  */
-function buildStudentSelectorHtml(sections, mode) {
+function buildStudentSelectorHtml(sections, mode, hasParentEmails) {
   const template = HtmlService.createTemplate(`
     <style>
       body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 0; margin: 0; background: #fcfcfc; color: #3c4043; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
@@ -1280,6 +1290,7 @@ function buildStudentSelectorHtml(sections, mode) {
       .chip:hover { background: #f1f3f4; }
       .chip.active { background: #e8f0fe; border-color: #1a73e8; color: #1967d2; font-weight: 600; }
       .bulk-links { white-space: nowrap; padding-top: 4px; }
+      .dest-note { font-size: 12px; color: #5f6368; font-style: italic; }
 
       /* Sections & Rows */
       .section-card {
@@ -1345,7 +1356,17 @@ function buildStudentSelectorHtml(sections, mode) {
       <h3>${mode === 'email' ? '📧 Email Student Reports' : '📂 Generate Drive Reports'}</h3>
       <div class="subtitle">Select students below to generate their progress reports.</div>
       
-      <? if (mode === 'email') { ?>
+      <? if (mode === 'email' && !hasParentEmails) { ?>
+        <div class="dest-section">
+          <div class="dest-note">✉️ No parent or guardian emails in this sheet &mdash; reports go to students only.</div>
+        </div>
+      <? } ?>
+
+      <? if (!hasParentEmails) { ?>
+        <input type="radio" name="email_dest" value="student" checked hidden>
+      <? } ?>
+
+      <? if (mode === 'email' && hasParentEmails) { ?>
         <div class="dest-section">
           <div class="dest-label-title">✉️ Send Emails To:</div>
           <div class="dest-container">
@@ -1406,7 +1427,9 @@ function buildStudentSelectorHtml(sections, mode) {
                    </div>
                    <div class="email-sub">
                      <span>👤 Student: <? if (stu.email) { ?><?= stu.email ?><? } else { ?><i class="none">None</i><? } ?></span>
-                     <span>👥 Parent: <? if (stu.parentEmail) { ?><?= stu.parentEmail ?><? } else { ?><i class="none">None</i><? } ?></span>
+                     <? if (hasParentEmails) { ?>
+                       <span>👥 Parent: <? if (stu.parentEmail) { ?><?= stu.parentEmail ?><? } else { ?><i class="none">None</i><? } ?></span>
+                     <? } ?>
                    </div>
                  </label>
                </div>
@@ -1546,6 +1569,7 @@ function buildStudentSelectorHtml(sections, mode) {
 
   template.sections = sections;
   template.mode = mode;
+  template.hasParentEmails = hasParentEmails;
   return template.evaluate();
 }
 

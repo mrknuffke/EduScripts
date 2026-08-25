@@ -118,3 +118,56 @@ var FLAT = sheetFrom([
   ["", "Solo, Han", "hsolo@falcon.com", "77"],
   ["", "Organa, Leia", "lorgana@alderaan.gov", "99"]
 ], []);
+
+// ===========================================================================
+//  Selector-dialog harness.
+//  buildStudentSelectorHtml hands its markup to HtmlService; stub that to
+//  capture the template, then compile it the way Apps Script does so the
+//  <? ?> scriptlets are actually executed rather than eyeballed.
+// ===========================================================================
+var capturedTemplate = null;
+var HtmlService = {
+  createTemplate: function (s) {
+    capturedTemplate = s;
+    return { evaluate: function () { return 'EVALUATED'; } };
+  }
+};
+
+function escapeHtml(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+                  .replace(/'/g, '&#39;');
+}
+
+function compileTemplate(tmpl) {
+  var code = "var __o = '';\n";
+  var re = /<\?(=|!=)?([\s\S]*?)\?>/g;
+  var pos = 0, m;
+  while ((m = re.exec(tmpl)) !== null) {
+    var lit = tmpl.slice(pos, m.index);
+    if (lit) code += "__o += " + JSON.stringify(lit) + ";\n";
+    if (m[1] === '=') code += "__o += escapeHtml(" + m[2] + ");\n";
+    else if (m[1] === '!=') code += "__o += (" + m[2] + ");\n";
+    else code += m[2] + "\n";
+    pos = m.index + m[0].length;
+  }
+  code += "__o += " + JSON.stringify(tmpl.slice(pos)) + ";\nreturn __o;";
+  return new Function('sections', 'mode', 'hasParentEmails', 'escapeHtml', code);
+}
+
+/** Renders the selector dialog and returns its HTML. */
+function renderSelector(sections, mode, hasParentEmails) {
+  buildStudentSelectorHtml(sections, mode, hasParentEmails);
+  return compileTemplate(capturedTemplate)(sections, mode, hasParentEmails, escapeHtml);
+}
+
+/** Two sections, three students, one email mismatch, one missing address. */
+var DIALOG_SECTIONS = [
+  { id: 'sec-0', name: 'AP Biology - Block 3', students: [
+    { row: 4, name: 'Abbott, Dana', email: 'dabbott@sas.edu.sg', parentEmail: 'p.abbott@mail.com', isMismatch: false },
+    { row: 5, name: "O'Brien, Jo", email: 'jobrien@sas.edu.sg', parentEmail: '', isMismatch: true }
+  ]},
+  { id: 'sec-1', name: 'AP Biology - Block 5', students: [
+    { row: 8, name: 'Knuffke, Sam', email: '', parentEmail: '', isMismatch: false }
+  ]}
+];
