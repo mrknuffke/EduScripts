@@ -137,119 +137,371 @@ function generateGradebookTemplate() {
   SpreadsheetApp.getUi().alert("Demo Gradebook created! You can now test the reporting tools.");
 }
 
+// --- ROSTER SCANNING (shared by the Student Selector and the Setup Checker) ---
+
+/** Words that mark a row as a class/section divider rather than a person. */
+const SECTION_LABEL_WORDS = /\b(block|period|section|class|hour|homeroom|semester|quarter|term|group)\b/i;
+
+/** Words that mark a row as a summary/statistics row rather than a person. */
+const SUMMARY_ROW_WORDS = /\b(average|avg|sum|total|median|mean|count|stdev|max|min|stats?)\b/i;
+
 /**
- * Scans the sheet and opens the Student Selector Dialog
+ * Reads a trimmed cell value from a row, tolerating a missing column index.
  */
-function showStudentSelector(mode) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  const data = sheet.getDataRange().getDisplayValues();
-  const backgrounds = sheet.getDataRange().getBackgrounds();
-  const fontColors = sheet.getDataRange().getFontColors();
+function rosterCell(row, colIndex) {
+  if (colIndex < 0 || colIndex >= row.length) return "";
+  return row[colIndex] ? String(row[colIndex]).trim() : "";
+}
 
-  const nameColIndex = 1;
-  let emailColIndex = -1;
-  let parentEmailColIndex = -1;
+/**
+ * Returns the first cell in a row that has any content.
+ */
+function firstNonEmptyCell(row) {
+  for (let c = 0; c < row.length; c++) {
+    if (row[c] && String(row[c]).trim() !== "") return String(row[c]).trim();
+  }
+  return "";
+}
 
-  // Find Email & Parent Email Columns in first 2 rows
-  for (let r = 0; r < 2; r++) {
+/**
+ * Flags rows where the email address doesn't look like it belongs to the name.
+ */
+function hasEmailNameMismatch(name, email) {
+  if (!email) return false;
+  if (email.indexOf('@') === -1) return true;
+  const lastName = name.includes(',') ? name.split(',')[0].trim() : name.split(' ')[0].trim();
+  const cleanName = lastName.replace(/[^a-zA-Z]/g, '').toLowerCase();
+  const cleanEmail = email.split('@')[0].replace(/[^a-zA-Z]/g, '').toLowerCase();
+  return cleanName.length > 1 && !cleanEmail.includes(cleanName);
+}
+
+/**
+ * Finds the row carrying the roster labels (Name / Email / Parent Email).
+ *
+ * This is NOT always the assignment header row. A gradebook may list assignment
+ * names in Row 2 and put the roster labels further down, above the first class
+ * divider. Scoring each candidate row on the labels it contains locates it
+ * wherever it sits, instead of assuming a fixed position.
+ */
+function findRosterHeaderRow(data) {
+  const limit = Math.min(12, data.length);
+  let bestRow = 0;
+  let bestScore = 0;
+
+  for (let r = 0; r < limit; r++) {
+    let hasName = false, hasEmail = false, hasParent = false, hasPreferred = false;
+
     for (let c = 0; c < data[r].length; c++) {
       if (!data[r][c]) continue;
-      const cellText = data[r][c].toLowerCase();
-      if (cellText.includes('parent') || cellText.includes('guardian')) {
-        parentEmailColIndex = c;
-      } else if (cellText.includes('email') && !cellText.includes('parent') && !cellText.includes('guardian')) {
-        emailColIndex = c;
-      }
+      const text = String(data[r][c]).trim().toLowerCase().replace(/:$/, '');
+      if (text.includes('preferred')) hasPreferred = true;
+      else if (text.includes('parent') || text.includes('guardian')) hasParent = true;
+      else if (text.includes('email')) hasEmail = true;
+      else if (text === 'name' || text === 'student name' || text === 'student') hasName = true;
     }
-  }
-  // Fallback for Student Email: if not found by explicit search but there's another column containing "email"
-  if (emailColIndex === -1) {
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < data[r].length; c++) {
-        if (!data[r][c]) continue;
-        const cellText = data[r][c].toLowerCase();
-        if (cellText.includes('email') && c !== parentEmailColIndex) {
-          emailColIndex = c;
-          break;
-        }
-      }
-      if (emailColIndex !== -1) break;
+
+    const score = (hasName ? 3 : 0) + (hasEmail ? 3 : 0) + (hasParent ? 1 : 0) + (hasPreferred ? 1 : 0);
+    if (score > bestScore) {                 // ties keep the earliest row
+      bestScore = score;
+      bestRow = r;
     }
   }
 
-  // Collect Students
-  let students = [];
-  let currentSection = "Ungrouped";
+  // Nothing recognisable: fall back to the documented Row 2.
+  return bestScore > 0 ? bestRow : Math.min(1, data.length - 1);
+}
 
-  for (let r = 3; r < data.length; r++) {
+/**
+ * Finds columns whose data rows hold nothing but checkbox values. Sheets renders
+ * a checkbox as the display string "TRUE"/"FALSE", which must never be mistaken
+ * for a section name or for evidence of graded work.
+ */
+function findCheckboxColumns(data, startRow) {
+  let width = 0;
+  for (let r = 0; r < data.length; r++) width = Math.max(width, data[r].length);
+
+  const checkboxCols = {};
+  for (let c = 0; c < width; c++) {
+    let booleans = 0;
+    let others = 0;
+    for (let r = startRow; r < data.length; r++) {
+      const value = rosterCell(data[r], c);
+      if (value === "") continue;
+      if (isBooleanText(value)) booleans++; else others++;
+    }
+    // Majority rather than all-or-nothing: a checkbox column often also carries
+    // a merged divider label or a headcount on a banner row.
+    if (booleans >= 2 && booleans / (booleans + others) >= 0.75) checkboxCols[c] = true;
+  }
+  return checkboxCols;
+}
+
+/**
+ * True when a cell is filled like a divider banner: a dark solid fill, or any
+ * non-white fill carrying white text. A banner row is never a student.
+ */
+function isBannerCell(background, fontColor) {
+  const bg = (background || "").toLowerCase();
+  const font = (fontColor || "").toLowerCase();
+  if (bg === '#000000' || bg === '#434343' || bg === '#666666') return true;
+  return bg !== "" && bg !== '#ffffff' && (font === '#ffffff' || font === '#fff');
+}
+
+/**
+ * Reads fill and font colours for just the columns that can carry a divider
+ * banner, rather than pulling formatting for the whole sheet.
+ */
+function readBannerStyles(sheet, rowCount, colIndexes) {
+  const styles = {};
+  colIndexes.forEach(function (c) {
+    if (c < 0 || styles[c]) return;
+    const range = sheet.getRange(1, c + 1, rowCount, 1);
+    styles[c] = { bg: range.getBackgrounds(), font: range.getFontColors() };
+  });
+  return styles;
+}
+
+/**
+ * Locates the Name / Email / Parent Email / Section columns by scanning the
+ * three header rows. Falls back to the documented positions when a label is
+ * missing; nameFallback records whether that fallback was needed.
+ */
+function findRosterColumns(data, headerRow, checkboxCols) {
+  const cols = { name: -1, email: -1, parentEmail: -1, section: -1, nameFallback: false };
+
+  // Read the roster header row first, then sweep the rows above it for any
+  // label it did not carry (some gradebooks split them across header rows).
+  const rowsToScan = [headerRow];
+  for (let r = 0; r < headerRow; r++) rowsToScan.push(r);
+
+  for (let i = 0; i < rowsToScan.length; i++) {
+    const r = rowsToScan[i];
+    for (let c = 0; c < data[r].length; c++) {
+      if (!data[r][c]) continue;
+      const text = String(data[r][c]).trim().toLowerCase();
+
+      if (text.includes('parent') || text.includes('guardian')) {
+        if (cols.parentEmail === -1) cols.parentEmail = c;
+      } else if (text.includes('email')) {
+        if (cols.email === -1) cols.email = c;
+      } else if (cols.section === -1 && c <= 2 && /^(section|block|period|class|group)\b/.test(text)) {
+        // Only the leftmost columns can be the Section column; otherwise an
+        // assignment header like "Class Discussion" would be mistaken for one.
+        cols.section = c;
+      } else if (cols.name === -1 && text.includes('name')) {
+        cols.name = c;
+      }
+    }
+  }
+
+  if (cols.name === -1) {
+    cols.name = 1;                 // Column B is the documented default
+    cols.nameFallback = true;
+  }
+
+  // A checkbox column is not a section column, however it is labelled.
+  if (cols.section > -1 && checkboxCols[cols.section]) cols.section = -1;
+
+  // Fall back to Column A only if it is unclaimed and actually holds section
+  // text. Gradebooks often use Column A for selection checkboxes instead.
+  if (cols.section === -1 &&
+      cols.name !== 0 && cols.email !== 0 && cols.parentEmail !== 0 &&
+      !checkboxCols[0] && columnHasLabelText(data, 0, 3)) {
+    cols.section = 0;
+  }
+  return cols;
+}
+
+/**
+ * True when a column holds at least one non-numeric, non-boolean label below
+ * the header rows - the mark of a real Section column.
+ */
+function columnHasLabelText(data, colIndex, startRow) {
+  for (let r = startRow; r < data.length; r++) {
+    const value = rosterCell(data[r], colIndex);
+    if (value === "") continue;
+    const upper = value.toUpperCase();
+    if (upper === "TRUE" || upper === "FALSE") continue;
+    if (!isNaN(Number(value))) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Walks the gradebook below the header rows and splits it into students and
+ * class-section dividers.
+ *
+ * A row counts as a student only when it has a name AND some evidence of being
+ * a real person: an email, a parent email, any graded work, or a "Last, First"
+ * style name. A row with text but none of that evidence is a class heading, so
+ * it becomes the section label for the students beneath it instead of being
+ * reported as a student. Section labels also come from a per-row Section
+ * column when the gradebook uses one.
+ */
+function scanGradebookRoster(sheet) {
+  const data = sheet.getDataRange().getDisplayValues();
+
+  // Locate the roster header wherever it sits; data begins on the next row.
+  const headerRow = findRosterHeaderRow(data);
+  const FIRST_DATA_ROW = headerRow + 1;
+
+  const checkboxCols = findCheckboxColumns(data, FIRST_DATA_ROW);
+  const cols = findRosterColumns(data, headerRow, checkboxCols);
+
+  // Roster and checkbox columns are excluded when looking for graded work.
+  const reserved = {};
+  [cols.name, cols.email, cols.parentEmail, cols.section].forEach(function (c) {
+    if (c > -1) reserved[c] = true;
+  });
+  Object.keys(checkboxCols).forEach(function (c) { reserved[c] = true; });
+
+  const styles = readBannerStyles(sheet, data.length, [0, cols.name]);
+
+  const students = [];
+  const sectionOrder = [];       // sheet order, not alphabetical
+  let currentSection = "";
+  let dividerCount = 0;
+
+  const noteSection = function (label) {
+    if (label && sectionOrder.indexOf(label) === -1) sectionOrder.push(label);
+  };
+
+  const isBannerRow = function (r) {
+    const keys = Object.keys(styles);
+    for (let i = 0; i < keys.length; i++) {
+      const s = styles[keys[i]];
+      if (s.bg[r] && isBannerCell(s.bg[r][0], s.font[r][0])) return true;
+    }
+    return false;
+  };
+
+  for (let r = FIRST_DATA_ROW; r < data.length; r++) {
     const row = data[r];
-    const firstCellBg = backgrounds[r][0];
-    const firstCellFont = fontColors[r][0];
-    const colA = row[0] ? String(row[0]).trim() : "";
-    const name = row[nameColIndex] ? String(row[nameColIndex]).trim() : "";
+    const name = rosterCell(row, cols.name);
+    const sectionCell = rosterCell(row, cols.section);
+    const email = rosterCell(row, cols.email);
+    const parentEmail = rosterCell(row, cols.parentEmail);
 
-    // DETECT SECTION HEADER
-    if (colA !== "" && (
-      firstCellBg === '#000000' ||
-      firstCellBg === '#434343' ||
-      (firstCellBg !== '#ffffff' && firstCellFont === '#ffffff') ||
-      colA.toLowerCase().includes('block') ||
-      (name === "" && !colA.includes("Average")))) {
-      currentSection = colA;
+    // Anything outside the roster/checkbox columns counts as graded work.
+    let gradeCount = 0;
+    for (let c = 0; c < row.length; c++) {
+      if (reserved[c]) continue;
+      if (row[c] && String(row[c]).trim() !== "") gradeCount++;
+    }
+
+    // Truly empty rows only. A banner's label can live in a reserved column
+    // (a merged cell in Column A), so gradeCount alone cannot decide this.
+    if (firstNonEmptyCell(row) === "") continue;
+
+    // Summary/statistics and leftover header rows are neither students nor dividers.
+    if (SUMMARY_ROW_WORDS.test(name) || SUMMARY_ROW_WORDS.test(sectionCell)) continue;
+    if (name === '0' || name === 'Student' || name === 'Preferred Name' || name.includes('Name:')) continue;
+
+    // A row styled as a banner is a class divider no matter what it contains -
+    // these often carry a headcount or a formula alongside the label.
+    const styledDivider = isBannerRow(r);
+
+    const looksLikePerson = name.indexOf(',') > -1 && !SECTION_LABEL_WORDS.test(name);
+    const isStudent = !styledDivider && name !== "" && (
+      email.indexOf('@') > -1 ||
+      parentEmail.indexOf('@') > -1 ||
+      gradeCount > 0 ||
+      looksLikePerson);
+
+    if (!isStudent) {
+      // A row with data but no name is a standards / date / filter row, not a
+      // class divider - unless it is styled as a banner.
+      let label = "";
+      if (styledDivider) label = name || sectionCell || firstNonEmptyCell(row);
+      else if (gradeCount === 0) label = name || sectionCell;
+
+      if (label && !isBooleanText(label)) {
+        currentSection = label;
+        dividerCount++;
+        noteSection(label);
+      }
       continue;
     }
 
-    // FILTER JUNK
-    if (!name || name === '' || name === '0' ||
-      name.includes('Name:') || name === 'Student' || name === 'Preferred Name' ||
-      name.includes('Average') || name.includes('Sum') ||
-      colA.includes('Average') || colA.includes('Sum')) {
-      continue;
-    }
-
-    const email = (emailColIndex > -1 && row[emailColIndex]) ? row[emailColIndex] : "";
-    const parentEmail = (parentEmailColIndex > -1 && row[parentEmailColIndex]) ? row[parentEmailColIndex] : "";
-
-    // SAFETY CHECK
-    let isMismatch = false;
-    if (email.includes('@')) {
-      let lastName = name.includes(',') ? name.split(',')[0].trim() : name.split(' ')[0].trim();
-      const cleanName = lastName.replace(/[^a-zA-Z]/g, '').toLowerCase();
-      const cleanEmail = email.split('@')[0].replace(/[^a-zA-Z]/g, '').toLowerCase();
-      if (cleanName.length > 1 && !cleanEmail.includes(cleanName)) isMismatch = true;
-    } else if (email !== "") {
-      isMismatch = true;
-    }
+    const section = (!isBooleanText(sectionCell) && sectionCell) || currentSection || "Ungrouped";
+    noteSection(section);
 
     students.push({
       row: r,
       name: name,
       email: email,
       parentEmail: parentEmail,
-      section: currentSection,
-      isMismatch: isMismatch
+      section: section,
+      isMismatch: hasEmailNameMismatch(name, email)
     });
   }
 
-  if (students.length === 0) {
+  return {
+    students: students,
+    sections: sectionOrder,
+    cols: cols,
+    dividerCount: dividerCount,
+    headerRow: headerRow,
+    firstDataRow: FIRST_DATA_ROW
+  };
+}
+
+/**
+ * True for the display text Sheets gives a checkbox cell.
+ */
+function isBooleanText(value) {
+  const upper = String(value || "").trim().toUpperCase();
+  return upper === "TRUE" || upper === "FALSE";
+}
+
+/**
+ * Groups scanned students into ordered, id-tagged sections for the selector UI.
+ * Sections keep their sheet order; students are alphabetised within a section.
+ */
+function groupStudentsBySection(students, sectionOrder) {
+  const groups = [];
+  const byName = {};
+
+  const ensureGroup = function (secName) {
+    if (!byName[secName]) {
+      byName[secName] = { id: 'sec-' + groups.length, name: secName, students: [] };
+      groups.push(byName[secName]);
+    }
+    return byName[secName];
+  };
+
+  sectionOrder.forEach(ensureGroup);
+
+  students.forEach(function (s) {
+    const group = ensureGroup(s.section);
+    s.sectionId = group.id;
+    group.students.push(s);
+  });
+
+  const populated = groups.filter(function (g) { return g.students.length > 0; });
+  populated.forEach(function (g) {
+    g.students.sort(function (a, b) { return a.name.localeCompare(b.name); });
+  });
+  return populated;
+}
+
+/**
+ * Scans the sheet and opens the Student Selector Dialog
+ */
+function showStudentSelector(mode) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const roster = scanGradebookRoster(sheet);
+
+  if (roster.students.length === 0) {
     SpreadsheetApp.getUi().alert("No students found. Check your Gradebook format.");
     return;
   }
 
-  // --- CRITICAL: SORT STUDENTS BY SECTION ---
-  students.sort((a, b) => {
-    if (a.section === b.section) return a.name.localeCompare(b.name);
-    return a.section.localeCompare(b.section);
-  });
-
-  // Assign IDs for UI
-  let uniqueSections = [...new Set(students.map(s => s.section))];
-  let sectionMap = {};
-  uniqueSections.forEach((sec, idx) => { sectionMap[sec] = `sec-${idx}`; });
-  students.forEach(s => { s.sectionId = sectionMap[s.section]; });
+  const sections = groupStudentsBySection(roster.students, roster.sections);
 
   // Generate and Show UI
-  const html = buildStudentSelectorHtml(students, mode);
+  const html = buildStudentSelectorHtml(sections, mode);
   SpreadsheetApp.getUi().showModalDialog(html.setWidth(600).setHeight(700), 'Student Selector');
 }
 
@@ -924,7 +1176,7 @@ function generateHtmlTables(rows) {
 /**
  * Builds the HTML interface for student selection.
  */
-function buildStudentSelectorHtml(students, mode) {
+function buildStudentSelectorHtml(sections, mode) {
   const template = HtmlService.createTemplate(`
     <style>
       body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 0; margin: 0; background: #fcfcfc; color: #3c4043; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
@@ -990,17 +1242,41 @@ function buildStudentSelectorHtml(students, mode) {
       /* Content Area */
       #content { flex: 1; overflow-y: auto; padding: 10px 20px; }
       
-      /* Sections & Rows */
-      .section-header { 
-        margin-top: 20px; margin-bottom: 8px; padding-bottom: 5px;
-        border-bottom: 2px solid #e8f0fe; color: #1967d2; font-weight: 600; font-size: 14px;
-        display: flex; align-items: center;
+      /* Toolbar: section filter + bulk links */
+      .toolbar {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
       }
-      .student-row { 
+      .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+      .chip {
+        padding: 4px 12px; border-radius: 14px; border: 1px solid #dadce0; background: white;
+        font-size: 12px; color: #5f6368; cursor: pointer; user-select: none; white-space: nowrap;
+      }
+      .chip:hover { background: #f1f3f4; }
+      .chip.active { background: #e8f0fe; border-color: #1a73e8; color: #1967d2; font-weight: 600; }
+      .bulk-links { white-space: nowrap; padding-top: 4px; }
+
+      /* Sections & Rows */
+      .section-card {
+        margin-bottom: 18px; border: 1px solid #dadce0; border-radius: 8px;
+        background: white; overflow: hidden;
+      }
+      .section-header {
+        padding: 10px 12px; background: #f8f9fa; border-bottom: 1px solid #e8eaed;
+        color: #1967d2; font-weight: 600; font-size: 14px;
+        display: flex; align-items: center; gap: 4px;
+      }
+      .section-name { flex: 1; cursor: pointer; font-weight: 600; }
+      .section-count { font-size: 11px; color: #5f6368; font-weight: 400; margin-right: 4px; }
+      .caret { cursor: pointer; color: #5f6368; font-size: 12px; padding: 0 4px; user-select: none; }
+      .section-card.collapsed .caret { transform: rotate(-90deg); display: inline-block; }
+      .section-body { padding: 8px; }
+      .student-row {
         display: flex; align-items: center; padding: 10px 12px; margin-bottom: 4px;
         background: white; border: 1px solid #dadce0; border-radius: 6px; transition: background 0.1s;
       }
       .student-row:hover { background: #f1f3f4; border-color: #d2e3fc; }
+      .none { color: #b0b0b0; }
       
       /* Controls */
       input[type="checkbox"] { transform: scale(1.1); margin-right: 12px; cursor: pointer; }
@@ -1067,38 +1343,50 @@ function buildStudentSelectorHtml(students, mode) {
 
     <!-- CONTENT -->
     <div id="content">
-       <div style="margin-bottom: 10px; display: flex; justify-content: flex-end;">
-         <a class="action-link" onclick="toggleAll(true)">Select All</a>
-         <a class="action-link" onclick="toggleAll(false)">Select None</a>
+       <div class="toolbar">
+         <div class="filter-chips">
+           <span class="chip active" onclick="filterSection(this, 'all')">All sections</span>
+           <? for (var g = 0; g < sections.length; g++) { ?>
+             <span class="chip" onclick="filterSection(this, '<?= sections[g].id ?>')"><?= sections[g].name ?></span>
+           <? } ?>
+         </div>
+         <div class="bulk-links">
+           <a class="action-link" onclick="toggleAll(true)">Select All</a>
+           <a class="action-link" onclick="toggleAll(false)">Select None</a>
+         </div>
        </div>
 
-       <? var lastSec = ""; ?>
-       <? for (var i = 0; i < students.length; i++) { ?>
-         <? if (students[i].section !== lastSec) { ?>
+       <? for (var g = 0; g < sections.length; g++) { ?>
+         <? var sec = sections[g]; ?>
+         <div class="section-card" id="card_<?= sec.id ?>">
            <div class="section-header">
-             <input type="checkbox" id="sec_chk_<?= students[i].sectionId ?>" 
-                    onchange="toggleSection(this, '<?= students[i].sectionId ?>')" checked>
-             <label for="sec_chk_<?= students[i].sectionId ?>" style="cursor: pointer;">
-               <?= students[i].section ?>
-             </label>
+             <input type="checkbox" class="sec-master" id="sec_chk_<?= sec.id ?>"
+                    onchange="toggleSection(this, '<?= sec.id ?>')" checked>
+             <label class="section-name" for="sec_chk_<?= sec.id ?>"><?= sec.name ?></label>
+             <span class="section-count"><?= sec.students.length ?> student<?= sec.students.length === 1 ? '' : 's' ?></span>
+             <span class="caret" onclick="toggleCollapse('<?= sec.id ?>')">▾</span>
            </div>
-           <? lastSec = students[i].section; ?>
-         <? } ?>
-         
-         <div class="student-row">
-           <input type="checkbox" id="chk_<?= i ?>" class="stu-chk <?= students[i].sectionId ?>" 
-                  data-mismatch="<?= students[i].isMismatch ?>"
-                  data-name="<?= students[i].name ?>"
-                  value="<?= students[i].row ?>" checked>
-           <label for="chk_<?= i ?>">
-             <div><?= students[i].name ?> 
-               <? if (students[i].isMismatch) { ?> <span class="badge badge-warn">Email Mismatch</span> <? } ?>
-             </div>
-             <div class="email-sub">
-               <span>👤 Student: <?= students[i].email || '<i style="color:#b0b0b0;">None</i>' ?></span>
-               <span>👥 Parent: <?= students[i].parentEmail || '<i style="color:#b0b0b0;">None</i>' ?></span>
-             </div>
-           </label>
+           <div class="section-body" id="body_<?= sec.id ?>">
+             <? for (var i = 0; i < sec.students.length; i++) { ?>
+               <? var stu = sec.students[i]; var uid = sec.id + '_' + i; ?>
+               <div class="student-row">
+                 <input type="checkbox" id="chk_<?= uid ?>" class="stu-chk <?= sec.id ?>"
+                        data-mismatch="<?= stu.isMismatch ?>"
+                        data-name="<?= stu.name ?>"
+                        data-section="<?= sec.id ?>"
+                        value="<?= stu.row ?>" onchange="updateStatus()" checked>
+                 <label for="chk_<?= uid ?>">
+                   <div><?= stu.name ?>
+                     <? if (stu.isMismatch) { ?> <span class="badge badge-warn">Email Mismatch</span> <? } ?>
+                   </div>
+                   <div class="email-sub">
+                     <span>👤 Student: <? if (stu.email) { ?><?= stu.email ?><? } else { ?><i class="none">None</i><? } ?></span>
+                     <span>👥 Parent: <? if (stu.parentEmail) { ?><?= stu.parentEmail ?><? } else { ?><i class="none">None</i><? } ?></span>
+                   </div>
+                 </label>
+               </div>
+             <? } ?>
+           </div>
          </div>
        <? } ?>
     </div>
@@ -1122,12 +1410,63 @@ function buildStudentSelectorHtml(students, mode) {
         }
       }
 
+      function visibleCards() {
+        return Array.from(document.querySelectorAll('.section-card'))
+                    .filter(card => card.style.display !== 'none');
+      }
+
+      // Select All / None applies to the sections currently shown by the filter.
       function toggleAll(state) {
-        document.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = state);
+        visibleCards().forEach(card => {
+          card.querySelectorAll('input[type="checkbox"]').forEach(c => { c.checked = state; });
+        });
+        updateStatus();
       }
 
       function toggleSection(source, secId) {
-        document.querySelectorAll('.' + secId).forEach(c => c.checked = source.checked);
+        document.querySelectorAll('.' + secId).forEach(c => { c.checked = source.checked; });
+        updateStatus();
+      }
+
+      function toggleCollapse(secId) {
+        const card = document.getElementById('card_' + secId);
+        const collapsed = card.classList.toggle('collapsed');
+        document.getElementById('body_' + secId).style.display = collapsed ? 'none' : '';
+      }
+
+      // View-only filter: hidden sections keep their selections, and the footer
+      // count always reports the full selection so nothing is sent by surprise.
+      function filterSection(chip, secId) {
+        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        document.querySelectorAll('.section-card').forEach(card => {
+          card.style.display = (secId === 'all' || card.id === 'card_' + secId) ? '' : 'none';
+        });
+        updateStatus();
+      }
+
+      function updateStatus() {
+        const checked = Array.from(document.querySelectorAll('.stu-chk:checked'));
+        const secs = new Set(checked.map(c => c.getAttribute('data-section')));
+
+        document.querySelectorAll('.section-card').forEach(card => {
+          const total = card.querySelectorAll('.stu-chk').length;
+          const on = card.querySelectorAll('.stu-chk:checked').length;
+          const master = card.querySelector('.sec-master');
+          master.checked = on > 0;
+          master.indeterminate = on > 0 && on < total;
+        });
+
+        const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+        document.getElementById('status-text').innerText = checked.length === 0
+          ? 'No students selected'
+          : plural(checked.length, 'student') + ' selected in ' + plural(secs.size, 'section');
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateStatus);
+      } else {
+        updateStatus();
       }
 
       function process(action) {
@@ -1180,7 +1519,7 @@ function buildStudentSelectorHtml(students, mode) {
     </script>
   `);
 
-  template.students = students;
+  template.sections = sections;
   template.mode = mode;
   return template.evaluate();
 }
@@ -1270,7 +1609,6 @@ function runSetupVerification() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getActiveSheet();
     const sheetName = sheet.getName();
-    const data = sheet.getDataRange().getDisplayValues();
     
     const results = {
       sheetName: sheetName,
@@ -1282,109 +1620,81 @@ function runSetupVerification() {
       parentColLetter: "",
       studentCount: 0,
       sectionCount: 0,
+      sectionNames: [],
+      headerRowNumber: 0,
+      firstDataRowNumber: 0,
       warnings: [],
       successes: []
     };
 
-    if (data.length < 2) {
+    if (sheet.getLastRow() < 2) {
       results.warnings.push("The active sheet is empty or has fewer than 2 rows. It must contain at least 4 rows to represent a proper Gradebook.");
       return results;
     }
 
-    // Header checks inside Row 2
-    const headers = data[1]; // Row 2 is 0-indexed index 1
-    
+    // Use the same scan the Student Selector uses, so the two can never disagree.
+    const roster = scanGradebookRoster(sheet);
+    const cols = roster.cols;
+    const colLetter = (idx) => {
+      let label = "";
+      for (let n = idx; n >= 0; n = Math.floor(n / 26) - 1) {
+        label = String.fromCharCode(65 + (n % 26)) + label;
+      }
+      return label;
+    };
+
+    const headerRowNumber = roster.headerRow + 1;      // 1-indexed for humans
+    const firstDataRowNumber = roster.firstDataRow + 1;
+    results.headerRowNumber = headerRowNumber;
+    results.firstDataRowNumber = firstDataRowNumber;
+    results.successes.push(`Roster labels found in Row ${headerRowNumber}; student data read from Row ${firstDataRowNumber} down.`);
+
     // 1. Check Name Column
-    if (headers.length > 1 && headers[1] && headers[1].toLowerCase().includes("name")) {
+    if (!cols.nameFallback) {
       results.nameColFound = true;
-      results.nameColLetter = "B";
-      results.successes.push("Column B correctly designated as 'Name'.");
-    } else {
-      let foundNameIdx = headers.findIndex(h => h && h.toLowerCase().includes("name"));
-      if (foundNameIdx !== -1) {
-        results.nameColFound = true;
-        results.nameColLetter = String.fromCharCode(65 + foundNameIdx);
-        results.warnings.push(`'Name' column found in Column ${results.nameColLetter} instead of Column B. Keeping student names in Column B is highly recommended.`);
+      results.nameColLetter = colLetter(cols.name);
+      if (cols.name === 1) {
+        results.successes.push("Column B correctly designated as 'Name'.");
       } else {
-        results.warnings.push("No column containing 'Name' was found in Row 2. You need a column named 'Name' (usually Column B) to identify students.");
+        results.warnings.push(`'Name' column found in Column ${results.nameColLetter} instead of Column B. Keeping student names in Column B is highly recommended.`);
       }
+    } else {
+      results.warnings.push(`No column containing 'Name' was found in Row ${headerRowNumber}. Assuming Column B. Add a 'Name' header to be sure students are read correctly.`);
     }
 
-    // 2. Search Email & Parent Email Columns
-    let emailColIdx = -1;
-    let parentEmailColIdx = -1;
-    for (let c = 0; c < headers.length; c++) {
-      if (!headers[c]) continue;
-      const cellText = headers[c].toLowerCase();
-      if (cellText.includes('parent') || cellText.includes('guardian')) {
-        parentEmailColIdx = c;
-      } else if (cellText.includes('email') && !cellText.includes('parent') && !cellText.includes('guardian')) {
-        emailColIdx = c;
-      }
-    }
-
-    if (emailColIdx !== -1) {
+    // 2. Student & Parent Email Columns
+    if (cols.email !== -1) {
       results.emailColFound = true;
-      results.emailColLetter = String.fromCharCode(65 + emailColIdx);
+      results.emailColLetter = colLetter(cols.email);
       results.successes.push(`Student 'Email' column found in Column ${results.emailColLetter}.`);
     } else {
-      results.warnings.push("No student 'Email' column was detected in Row 2. Add an 'Email' column to allow sending reports to students.");
+      results.warnings.push(`No student 'Email' column was detected in Row ${headerRowNumber}. Add an 'Email' header above your email addresses to allow sending reports to students.`);
     }
 
-    if (parentEmailColIdx !== -1) {
+    if (cols.parentEmail !== -1) {
       results.parentColFound = true;
-      results.parentColLetter = String.fromCharCode(65 + parentEmailColIdx);
+      results.parentColLetter = colLetter(cols.parentEmail);
       results.successes.push(`Parent/Guardian 'Parent Email' column found in Column ${results.parentColLetter}.`);
     } else {
-      results.warnings.push("No 'Parent Email' column was found. If you wish to send copies to parents, add a column named 'Parent Email' or 'Guardian Email' in Row 2.");
+      results.warnings.push(`No 'Parent Email' column was found. If you wish to send copies to parents, add a 'Parent Email' or 'Guardian Email' header in Row ${headerRowNumber}.`);
     }
 
-    // 3. Scan backgrounds/data for Student Rows & Section Dividers
-    const nameColIndex = 1;
-    const backgrounds = sheet.getDataRange().getBackgrounds();
-    const fontColors = sheet.getDataRange().getFontColors();
-    let currentSection = "Ungrouped";
-
-    for (let r = 3; r < data.length; r++) {
-      const row = data[r];
-      const firstCellBg = backgrounds[r][0];
-      const firstCellFont = fontColors[r][0];
-      const colA = row[0] ? String(row[0]).trim() : "";
-      const name = row[nameColIndex] ? String(row[nameColIndex]).trim() : "";
-
-      // DETECT SECTION HEADER
-      if (colA !== "" && (
-        firstCellBg === '#000000' ||
-        firstCellBg === '#434343' ||
-        (firstCellBg !== '#ffffff' && firstCellFont === '#ffffff') ||
-        colA.toLowerCase().includes('block') ||
-        (name === "" && !colA.includes("Average")))) {
-        results.sectionCount++;
-        currentSection = colA;
-        continue;
-      }
-
-      // FILTER JUNK
-      if (!name || name === '' || name === '0' ||
-        name.includes('Name:') || name === 'Student' || name === 'Preferred Name' ||
-        name.includes('Average') || name.includes('Sum') ||
-        colA.includes('Average') || colA.includes('Sum')) {
-        continue;
-      }
-
-      results.studentCount++;
-    }
+    // 3. Student Rows & Class Sections
+    const namedSections = roster.sections.filter(s => s !== "Ungrouped");
+    results.studentCount = roster.students.length;
+    results.sectionCount = namedSections.length;
+    results.sectionNames = namedSections;
 
     if (results.studentCount > 0) {
-      results.successes.push(`Parsed ${results.studentCount} active student rows starting at Row 4.`);
+      results.successes.push(`Parsed ${results.studentCount} active student rows.`);
     } else {
-      results.warnings.push("No active students detected below Row 3. Ensure student names are entered starting in Row 4, and Column B is designated as 'Name'.");
+      results.warnings.push(`No active students detected below Row ${headerRowNumber}. Ensure student names sit under a 'Name' header and that each student has an email or some graded work.`);
     }
 
     if (results.sectionCount > 0) {
-      results.successes.push(`Detected ${results.sectionCount} class section dividers in Column A.`);
+      results.successes.push(`Detected ${results.sectionCount} class sections: ${namedSections.join(', ')}.`);
     } else {
-      results.warnings.push("No section headers detected. To group students by class section, style a row with a solid background and input the section name (e.g. 'Block 1') in Column A.");
+      results.warnings.push("No class sections detected. To group students in the selector, either put the section name (e.g. 'Block 1') in Column A of each student row, or give each class its own heading row with the section name and no grades.");
     }
 
     return results;
@@ -1790,8 +2100,8 @@ function buildSetupGuideHtml() {
             <li>
               <strong>Row 4+: Student Data & Dividers</strong>
               <ul>
-                <li><strong>Section Dividers</strong>: To group students into class periods, style a full row with a solid background (e.g., black or dark gray) and place the block name (e.g. <i>Block 1</i>) in Column A.</li>
-                <li><strong>Student Rows</strong>: Student details and grade records. Formula cells or summary averages are automatically skipped.</li>
+                <li><strong>Class Sections</strong>: Students are grouped two ways, and either works. Put the section name (e.g. <i>Block 1</i>) in Column A of every student row, <em>or</em> give each class a heading row that holds only the section name &mdash; no email, no grades. Styling the heading row with a solid background is optional; the script goes by content, not colour.</li>
+                <li><strong>Student Rows</strong>: Student details and grade records. A row counts as a student only if it has a name plus an email, a parent email, some graded work, or a <i>Last, First</i> style name &mdash; so course titles and banner rows are treated as headings instead of students. Formula cells and summary averages are automatically skipped.</li>
               </ul>
             </li>
           </ul>
@@ -1867,6 +2177,18 @@ function buildSetupGuideHtml() {
           resultsDiv.innerHTML = '';
 
           let html = '';
+
+          // 0. Layout Interpretation - shows how the sheet was actually read, so
+          //    an unfamiliar layout is visible instead of silently misparsed.
+          html += '<div class="check-item check-success">' +
+                  '<span class="check-icon">🧭</span>' +
+                  '<div class="check-details">' +
+                    '<div class="check-title">Layout Detected</div>' +
+                    '<div class="check-desc">Roster headers read from Row <b>' + res.headerRowNumber + '</b>; ' +
+                      'students read from Row <b>' + res.firstDataRowNumber + '</b> down. ' +
+                      'If those row numbers look wrong, everything below will be wrong too.</div>' +
+                  '</div>' +
+                '</div>';
 
           // 1. Name Column Check
           if (res.nameColFound) {
@@ -1944,21 +2266,21 @@ function buildSetupGuideHtml() {
                   '</div>';
           }
 
-          // 5. Section Dividers Check
+          // 5. Class Sections Check
           if (res.sectionCount > 0) {
             html += '<div class="check-item check-success">' +
                     '<span class="check-icon">✅</span>' +
                     '<div class="check-details">' +
-                      '<div class="check-title">Section Dividers</div>' +
-                      '<div class="check-desc">Found <b>' + res.sectionCount + '</b> class dividers in Column A. Students will be categorized by class/block in the selector.</div>' +
+                      '<div class="check-title">Class Sections</div>' +
+                      '<div class="check-desc">Found <b>' + res.sectionCount + '</b> class sections: <b>' + res.sectionNames.join(', ') + '</b>. Each one gets its own group in the selector.</div>' +
                     '</div>' +
                   '</div>';
           } else {
             html += '<div class="check-item check-warning">' +
                     '<span class="check-icon">ℹ️</span>' +
                     '<div class="check-details">' +
-                      '<div class="check-title">No Section Dividers (Optional)</div>' +
-                      '<div class="check-desc">No group headers were found in Column A. To group students by period or class block, fill a row with a solid background and write the name in Column A.</div>' +
+                      '<div class="check-title">No Class Sections (Optional)</div>' +
+                      '<div class="check-desc">All students will appear in one group. To split them by period or block, either put the section name in Column A of each student row, or give each class a heading row containing only the section name.</div>' +
                     '</div>' +
                   '</div>';
           }
