@@ -267,7 +267,7 @@ function readBannerStyles(sheet, rowCount, colIndexes) {
  * missing; nameFallback records whether that fallback was needed.
  */
 function findRosterColumns(data, headerRow, checkboxCols) {
-  const cols = { name: -1, email: -1, parentEmail: -1, section: -1, nameFallback: false };
+  const cols = { name: -1, preferred: -1, email: -1, parentEmail: -1, section: -1, nameFallback: false };
 
   // Read the roster header row first, then sweep the rows above it for any
   // label it did not carry (some gradebooks split them across header rows).
@@ -288,6 +288,8 @@ function findRosterColumns(data, headerRow, checkboxCols) {
         // Only the leftmost columns can be the Section column; otherwise an
         // assignment header like "Class Discussion" would be mistaken for one.
         cols.section = c;
+      } else if (cols.preferred === -1 && text.includes('preferred')) {
+        cols.preferred = c;
       } else if (cols.name === -1 && text.includes('name')) {
         cols.name = c;
       }
@@ -305,11 +307,27 @@ function findRosterColumns(data, headerRow, checkboxCols) {
   // Fall back to Column A only if it is unclaimed and actually holds section
   // text. Gradebooks often use Column A for selection checkboxes instead.
   if (cols.section === -1 &&
-      cols.name !== 0 && cols.email !== 0 && cols.parentEmail !== 0 &&
-      !checkboxCols[0] && columnHasLabelText(data, 0, 3)) {
+      cols.name !== 0 && cols.preferred !== 0 && cols.email !== 0 && cols.parentEmail !== 0 &&
+      !checkboxCols[0] && columnHasLabelText(data, 0, headerRow + 1)) {
     cols.section = 0;
   }
+
+  // Everything up to and including this column is roster data, never an
+  // assignment. Report generation uses it to find where assignments begin.
+  cols.lastRosterCol = Math.max(
+    cols.name, cols.preferred, cols.email, cols.parentEmail, cols.section);
+
   return cols;
+}
+
+/**
+ * Resolves the roster columns from sheet values already in hand, without
+ * re-reading the sheet. Used by report generation, which loads the data itself.
+ */
+function resolveRosterColumns(data) {
+  const headerRow = findRosterHeaderRow(data);
+  const checkboxCols = findCheckboxColumns(data, headerRow + 1);
+  return findRosterColumns(data, headerRow, checkboxCols);
 }
 
 /**
@@ -538,7 +556,14 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
   const headerRowIndex = 1;
   const categoryRowIndex = 0;
   const standardsRowIndex = 2;
-  const nameColIndex = 1;
+
+  // Assignment headers keep their fixed rows, but the roster columns are found
+  // by label: Name is not always Column B, and the Email column may sit in a
+  // header row of its own. Getting these wrong produces nameless reports and
+  // renders the email column as if it were an assignment.
+  const rosterCols = resolveRosterColumns(data);
+  const nameColIndex = rosterCols.name;
+  const lastRosterCol = rosterCols.lastRosterCol;
 
   const coolMessages = [
     // Original fun puns
@@ -604,17 +629,17 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
       categories[i] = categories[i - 1];
     }
   }
-  let emailColIndex = -1;
-  let parentEmailColIndex = -1;
+  let emailColIndex = rosterCols.email;
+  let parentEmailColIndex = rosterCols.parentEmail;
 
-  // Search headers
+  // Search headers (only for whatever the roster scan could not resolve)
   for (let i = 0; i < headers.length; i++) {
     if (!headers[i]) continue;
     const text = headers[i].toLowerCase();
     if (text.includes('parent') || text.includes('guardian')) {
-      parentEmailColIndex = i;
+      if (parentEmailColIndex === -1) parentEmailColIndex = i;
     } else if (text.includes('email') && !text.includes('parent') && !text.includes('guardian')) {
-      emailColIndex = i;
+      if (emailColIndex === -1) emailColIndex = i;
     }
   }
 
@@ -660,7 +685,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
 
   let cutoffColIndex = headers.length;
   const headerBgColors = backgrounds[headerRowIndex];
-  for (let i = nameColIndex + 1; i < headers.length; i++) {
+  for (let i = lastRosterCol + 1; i < headers.length; i++) {
     if (headerBgColors[i] === '#000000') { cutoffColIndex = i; break; }
   }
 
@@ -686,14 +711,14 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
 
   let lastCategory = "Uncategorized";
   columnDefs.forEach(col => {
-    if (!col || col.id <= nameColIndex) return;
+    if (!col || col.id <= lastRosterCol) return;
     if (col.rawCategory && col.rawCategory.trim() !== "") lastCategory = col.rawCategory.trim();
     col.finalCategory = lastCategory;
   });
 
   let lastSeenHeader = "";
   columnDefs.forEach(col => {
-    if (!col || col.id <= nameColIndex) return;
+    if (!col || col.id <= lastRosterCol) return;
     let currentHeader = col.rawHeader ? col.rawHeader.trim() : "";
     if (currentHeader !== "" && subjectName === "Chemistry") lastSeenHeader = currentHeader;
 
@@ -769,7 +794,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
     // Gather Data
     let reportRows = [];
     columnDefs.forEach((col, idx) => {
-      if (!col || idx <= nameColIndex || col.rawHeader === 'Assignment' || col.rawHeader === 'Preferred Name') return;
+      if (!col || idx <= lastRosterCol || col.rawHeader === 'Assignment' || col.rawHeader === 'Preferred Name') return;
 
       const rawLower = col.rawHeader ? col.rawHeader.toLowerCase() : "";
       const finalLower = col.finalName ? col.finalName.toLowerCase() : "";

@@ -44,6 +44,31 @@ check("Chem: checkbox cols excluded from Section", c.roster.cols.section, -1);
 check("Chem: Average row dropped",
   c.roster.students.filter(function (s) { return s.name.indexOf("Average") > -1; }).length, 0);
 
+var c2 = scan("2b. Chem Sem 1 (roster shifted to columns A/B/C)", CHEM_V2);
+check("ChemV2: roster header is row 4", c2.roster.headerRow + 1, 4);
+check("ChemV2: Name is column A", c2.roster.cols.name, 0);
+check("ChemV2: Preferred Name is column B", c2.roster.cols.preferred, 1);
+check("ChemV2: Email is column C", c2.roster.cols.email, 2);
+check("ChemV2: assignments begin after column C", c2.roster.cols.lastRosterCol, 2);
+check("ChemV2: 4 students", c2.roster.students.length, 4);
+check("ChemV2: every student has a name", c2.roster.students.every(function (s) { return s.name !== ""; }), true);
+check("ChemV2: every student has an email", c2.roster.students.every(function (s) { return s.email.indexOf("@") > -1; }), true);
+check("ChemV2: banner became the section", c2.names, ["A2/C4"]);
+check("ChemV2: Average row dropped",
+  c2.roster.students.filter(function (s) { return s.name.indexOf("Average") > -1; }).length, 0);
+
+// Report generation resolves the same columns from values it already holds.
+var rc = resolveRosterColumns(CHEM_V2.getDataRange().getDisplayValues());
+check("ChemV2 report path: name column", rc.name, 0);
+check("ChemV2 report path: email column", rc.email, 2);
+check("ChemV2 report path: last roster column", rc.lastRosterCol, 2);
+var rcBio = resolveRosterColumns(AP_BIO.getDataRange().getDisplayValues());
+check("AP Bio report path: name column B", rcBio.name, 1);
+check("AP Bio report path: email column D", rcBio.email, 3);
+check("AP Bio report path: last roster column D", rcBio.lastRosterCol, 3);
+var rcDemo = resolveRosterColumns(DEMO.getDataRange().getDisplayValues());
+check("Demo report path: last roster column D", rcDemo.lastRosterCol, 3);
+
 var d = scan("3. Demo gradebook (per-row Section column)", DEMO);
 check("Demo: Section column is A", d.roster.cols.section, 0);
 check("Demo: 4 students", d.roster.students.length, 4);

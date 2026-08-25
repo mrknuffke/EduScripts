@@ -71,6 +71,22 @@ var CHEM = sheetFrom([
   ["", "Average:", "", "", "", "", "", "", ""]
 ], [4]);
 
+// --- 2b. Chem Sem 1 after the leading checkbox column was removed: roster is
+//         now A/B/C, assignments start at D, banner label merged in column A.
+var CHEM_V2 = sheetFrom([
+  ["", "", "Admin", "Formative Work", "", "", "i's and m's", "Completion Percentage"],
+  ["", "", "", "AC: Initial Appointment", "AC: Journal Submitted", "AC: 1.3- The Table Has a Pattern", "", ""],
+  ["", "", "", "DCI.1 Structure & Properties of Matter", "", "", "", ""],
+  ["Name", "Preferred Name", "Email", "", "", "", "", ""],
+  ["A2/C4", "", "23", "", "", "", "", ""],
+  ["Bong, Abigail", "", "bong49520@sas.edu.sg", "TRUE", "TRUE", "TRUE", "1", "67"],
+  ["He, Yanting", "Eric", "he48639@sas.edu.sg", "TRUE", "TRUE", "TRUE", "1", "67"],
+  ["He, Zhuting", "Henry", "he48640@sas.edu.sg", "FALSE", "FALSE", "FALSE", "3", "0"],
+  ["Yu, Chengxuan", "", "yu48719@sas.edu.sg", "FALSE", "TRUE", "FALSE", "2", "33"],
+  ["", "", "", "", "", "", "", ""],
+  ["Average:", "", "", "", "", "", "", ""]
+], [4]);
+
 // --- 3. The demo gradebook this script generates: Section value per row.
 var DEMO = sheetFrom([
   ["", "", "", "", "Classwork", "Classwork", "Homework", "Assessments"],
