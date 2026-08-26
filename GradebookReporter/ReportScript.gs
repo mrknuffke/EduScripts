@@ -406,6 +406,40 @@ function rubricLabelFor(value) {
 }
 
 /**
+ * An AP Biology lab below this rubric score counts as outstanding work.
+ *
+ * 3 (Meeting) is a legitimate stop on the way to 4, not a problem: the lab
+ * standard note carries the "get to 4 by the end of the semester" message, so
+ * only work below Meeting is flagged as outstanding.
+ */
+const AP_BIO_LAB_CONCERN_BELOW = 3;
+
+/**
+ * Decides whether a report shows outstanding work, which suppresses the
+ * congratulations message and drives the encouragement tiers.
+ *
+ * AP Biology labs are judged on their rubric score rather than on a Missing or
+ * Incomplete marker, and are checked before the assessment exclusion below.
+ * They are classified as assessments, so folding them in with everything else
+ * would silently exclude them and leave the rule unable to fire at all.
+ */
+function hasOutstandingWork(reportRows, subjectName) {
+  return reportRows.some(function (item) {
+    if (item.isSummaryStat) return false;
+
+    if (subjectName === "AP Biology" && item.isRubricScored) {
+      return item.rawScore !== null && item.rawScore !== undefined &&
+             item.rawScore < AP_BIO_LAB_CONCERN_BELOW;
+    }
+
+    // Scored assessments are reported for information, not as work owed.
+    if (item.isQuizOrWebAssign) return false;
+
+    return item.value === 'Missing' || item.value === 'Incomplete';
+  });
+}
+
+/**
  * True for columns marked on the 0-4 rubric rather than as complete/missing:
  * Chemistry formatives and summatives, and AP Biology labs.
  *
@@ -946,12 +980,11 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
           if (isActivityOrInfoDoc) { displayValue = 'Incomplete'; isIssue = true; }
         }
 
-        if (subjectName === "AP Biology") {
-          const nameCheck = col.finalName.toLowerCase().trim();
-          if (nameCheck.startsWith("lab")) {
-            const numVal = parseFloat(valStr);
-            if (!isNaN(numVal) && numVal < 4) isIssue = true;
-          }
+        // Uses the rubric flag rather than a name prefix: a lab headed
+        // "Topic Quest Lab 1" does not start with "lab" and was never matched.
+        if (subjectName === "AP Biology" && col.isRubricScored) {
+          const numVal = parseFloat(valStr);
+          if (!isNaN(numVal) && numVal < AP_BIO_LAB_CONCERN_BELOW) isIssue = true;
         }
       } else {
         displayValue = "-";
@@ -985,16 +1018,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
       }
     });
 
-    // Once a lab score renders as "Meeting", parseFloat on the label is NaN, so
-    // the below-4 rule reads the score captured alongside it instead.
-    const hasActualMissingWork = reportRows.some(item =>
-      !item.isQuizOrWebAssign && !item.isSummaryStat && (
-        item.value === 'Missing' ||
-        item.value === 'Incomplete' ||
-        (subjectName === "AP Biology" && item.name.toLowerCase().startsWith("lab") &&
-         item.rawScore !== null && item.rawScore < 4)
-      )
-    );
+    const hasActualMissingWork = hasOutstandingWork(reportRows, subjectName);
 
     const hasSummaryIssue = reportRows.some(item =>
       item.isSummaryStat &&

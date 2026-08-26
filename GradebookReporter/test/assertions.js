@@ -382,6 +382,57 @@ check("html: nothing for Chemistry",
 check("html: nothing when there are no labs",
   generateHtmlLabStandardNote([plainRow("ID: 1.2", "Complete")], "AP Biology", false), "");
 
+// =================== outstanding-work rule ==================================
+out.push("\n== 12. Outstanding work ==");
+
+function lab(score) {
+  return { name: "Topic Quest Lab 1", value: "x", rawScore: score,
+           isRubricScored: true, isQuizOrWebAssign: true, isSummaryStat: false };
+}
+function missing() {
+  return { name: "AC: Water Stations", value: "Missing", rawScore: null,
+           isRubricScored: false, isQuizOrWebAssign: false, isSummaryStat: false };
+}
+function quizScore(v) {
+  return { name: "Unit 1 Quiz", value: v, rawScore: null,
+           isRubricScored: false, isQuizOrWebAssign: true, isSummaryStat: false };
+}
+
+check("threshold is 3", AP_BIO_LAB_CONCERN_BELOW, 3);
+
+// The point of the change: Meeting is not outstanding work.
+check("lab at 4 is not outstanding", hasOutstandingWork([lab(4)], "AP Biology"), false);
+check("lab at 3 (Meeting) is NOT outstanding", hasOutstandingWork([lab(3)], "AP Biology"), false);
+check("lab at 2 (Developing) IS outstanding", hasOutstandingWork([lab(2)], "AP Biology"), true);
+check("lab at 1 (Emerging) IS outstanding", hasOutstandingWork([lab(1)], "AP Biology"), true);
+check("lab at 0 (Not Yet Evident) IS outstanding", hasOutstandingWork([lab(0)], "AP Biology"), true);
+
+// The rule must survive the assessment exclusion that used to kill it.
+check("a lab flagged as an assessment is still judged",
+  hasOutstandingWork([lab(1)], "AP Biology"), true);
+check("mixed report: one low lab is enough",
+  hasOutstandingWork([lab(4), lab(3), lab(1)], "AP Biology"), true);
+check("mixed report: all at 3 or above is clean",
+  hasOutstandingWork([lab(4), lab(3), lab(3)], "AP Biology"), false);
+
+// An unscored lab makes no claim either way.
+check("lab with no score is not outstanding",
+  hasOutstandingWork([{ name: "Lab 1", value: "Exempt", rawScore: null,
+                        isRubricScored: true, isQuizOrWebAssign: true, isSummaryStat: false }], "AP Biology"), false);
+
+// Non-lab behaviour is unchanged.
+check("Missing work is still outstanding", hasOutstandingWork([missing()], "AP Biology"), true);
+check("Missing work is outstanding in Chemistry too", hasOutstandingWork([missing()], "Chemistry"), true);
+check("a scored quiz is not work owed", hasOutstandingWork([quizScore("88")], "AP Biology"), false);
+check("summary stats never count", hasOutstandingWork(
+  [{ name: "Completion Percentage", value: "33", isSummaryStat: true }], "AP Biology"), false);
+check("empty report is clean", hasOutstandingWork([], "AP Biology"), false);
+
+// Chemistry rubric columns are not judged by the AP Bio lab rule.
+check("a Chem rubric score of 1 is not outstanding on its own",
+  hasOutstandingWork([{ name: "Formative 1.1", value: "Emerging", rawScore: 1,
+                        isRubricScored: true, isQuizOrWebAssign: true, isSummaryStat: false }], "Chemistry"), false);
+
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));
 console.log(out.join("\n"));
