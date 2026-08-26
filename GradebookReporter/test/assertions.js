@@ -260,6 +260,54 @@ check("null inputs tolerated",
 check("'Complete Pre-Test' header DOES match (see README note)",
   matchesAssessmentColumn("AC: Complete Pre-Test", "", ""), true);
 
+// =================== 0-4 rubric scoring =====================================
+out.push("\n== 10. Rubric scoring ==");
+
+check("0 -> Not Yet Evident", rubricLabelFor("0"), "Not Yet Evident");
+check("1 -> Emerging", rubricLabelFor("1"), "Emerging");
+check("2 -> Developing", rubricLabelFor("2"), "Developing");
+check("3 -> Meeting", rubricLabelFor("3"), "Meeting");
+check("4 -> Meeting with Distinction", rubricLabelFor("4"), "Meeting with Distinction");
+check("numeric input works too", rubricLabelFor(3), "Meeting");
+
+// Blank is not zero: "no score yet" must not read as "Not Yet Evident".
+check("empty string is not a zero", rubricLabelFor(""), null);
+check("null is not a zero", rubricLabelFor(null), null);
+check("undefined is not a zero", rubricLabelFor(undefined), null);
+check("whitespace is not a zero", rubricLabelFor("   "), null);
+
+// Anything off the 0-4 scale passes through untouched.
+check("half marks pass through", rubricLabelFor("0.5"), null);
+check("3.5 passes through", rubricLabelFor("3.5"), null);
+check("5 is off the scale", rubricLabelFor("5"), null);
+check("a percentage passes through", rubricLabelFor("95"), null);
+check("checkbox text passes through", rubricLabelFor("TRUE"), null);
+check("'m' passes through", rubricLabelFor("m"), null);
+check("'Exempt' passes through", rubricLabelFor("Exempt"), null);
+
+// Which columns use the rubric.
+check("Chem formative column", isRubricScoredColumn("Chemistry", "Formative 1.1", "", "Formative 1.1", false), true);
+check("Chem summative standard", isRubricScoredColumn("Chemistry", "1.3", "", "1.3", true), true);
+check("Chem summative by header", isRubricScoredColumn("Chemistry", "Summative 2.1", "", "Summative 2.1", false), true);
+check("Chem formative by category", isRubricScoredColumn("Chemistry", "1.5 Bonding", "Formative Work", "1.5 Bonding", false), true);
+check("XL Chemistry included", isRubricScoredColumn("XL Chemistry", "Formative 1.1", "", "Formative 1.1", false), true);
+check("AP Bio lab by name", isRubricScoredColumn("AP Biology", "Lab 3", "", "Lab 3", false), true);
+check("AP Bio lab by category", isRubricScoredColumn("AP Biology", "Topic Quest 2", "Labs", "Topic Quest 2", false), true);
+
+// Columns that must NOT be converted.
+check("Chem checkbox activity is not rubric",
+  isRubricScoredColumn("Chemistry", "AC: Journal Submitted", "Admin", "AC: Journal Submitted", false), false);
+check("AP Bio completion column is not rubric",
+  isRubricScoredColumn("AP Biology", "AC: Water Stations", "Completion", "AC: Water Stations", false), false);
+check("AP Bio topic question is not rubric",
+  isRubricScoredColumn("AP Biology", "ID: 1.2 Water", "Topic Questions", "ID: 1.2 Water", false), false);
+check("unknown subject never uses the rubric",
+  isRubricScoredColumn("Grade", "Formative 1.1", "Formative Work", "Formative 1.1", false), false);
+
+// The combination that motivated ordering the rubric first.
+check("a rubric 1 is Emerging, not Complete", rubricLabelFor("1"), "Emerging");
+check("a rubric 0 is Not Yet Evident, not Missing", rubricLabelFor("0"), "Not Yet Evident");
+
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));
 console.log(out.join("\n"));

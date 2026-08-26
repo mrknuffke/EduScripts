@@ -376,6 +376,58 @@ function matchesAssessmentColumn(header, standard, category) {
   });
 }
 
+// --- 0-4 RUBRIC SCORING -----------------------------------------------------
+
+/** Descriptors for the 0-4 rubric used by Chem formatives/summatives and AP Bio labs. */
+const RUBRIC_LABELS = {
+  '0': 'Not Yet Evident',
+  '1': 'Emerging',
+  '2': 'Developing',
+  '3': 'Meeting',
+  '4': 'Meeting with Distinction'
+};
+
+/**
+ * Converts a 0-4 rubric score into its descriptor.
+ *
+ * Returns null for anything that is not exactly 0, 1, 2, 3 or 4, so half marks,
+ * percentages, checkbox text and blanks fall through to the normal handling.
+ * A blank is deliberately not a zero: "no score yet" is not "Not Yet Evident".
+ */
+function rubricLabelFor(value) {
+  const raw = String(value === null || value === undefined ? "" : value).trim();
+  if (raw === "") return null;
+
+  const num = Number(raw);
+  if (!isFinite(num)) return null;
+
+  const key = String(num);
+  return Object.prototype.hasOwnProperty.call(RUBRIC_LABELS, key) ? RUBRIC_LABELS[key] : null;
+}
+
+/**
+ * True for columns marked on the 0-4 rubric rather than as complete/missing:
+ * Chemistry formatives and summatives, and AP Biology labs.
+ *
+ * This matters before display: the ordinary mapping turns a 1 into "Complete"
+ * and a 0 into "Missing", which is wrong for a rubric where 1 means Emerging
+ * and 0 means Not Yet Evident.
+ */
+function isRubricScoredColumn(subjectName, header, category, finalName, isSummativeStandard) {
+  const text = (String(header || "") + " " + String(category || "")).toLowerCase();
+  const name = String(finalName || "").toLowerCase().trim();
+
+  if (subjectName === "AP Biology") {
+    return name.indexOf('lab') === 0 || /\blabs?\b/.test(text) || /\blabs?\b/.test(name);
+  }
+  if (subjectName === "Chemistry" || subjectName === "XL Chemistry") {
+    return !!isSummativeStandard ||
+           text.indexOf('formative') > -1 || text.indexOf('summative') > -1 ||
+           name.indexOf('formative') > -1 || name.indexOf('summative') > -1;
+  }
+  return false;
+}
+
 /**
  * Builds the per-column category labels from the category header row.
  *
@@ -826,6 +878,9 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
     if (summaryKeywords.some(k => lowerHeader.includes(k))) {
       col.isSummaryStat = true;
     }
+
+    col.isRubricScored = !col.isSummaryStat && isRubricScoredColumn(
+      subjectName, col.rawHeader, col.finalCategory, col.finalName, col.isSummativeStandard);
   });
 
   // --- PREPARE OUTPUT ---
@@ -865,13 +920,23 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
       let displayValue = value;
       let isIssue = false;
       let isExempt = false;
+      let rawScore = null;
 
       if (value) {
         const valStr = String(value).trim();
         const lowerVal = valStr.toLowerCase();
         const rawHeaderLower = col.rawHeader ? col.rawHeader.toLowerCase() : "";
 
-        if ((lowerVal === 'true' || valStr === '1') && !col.isSummaryStat) displayValue = 'Complete';
+        // A rubric score must be read before the complete/missing mapping,
+        // which would otherwise turn 1 into "Complete" and 0 into "Missing".
+        const rubricLabel = col.isRubricScored ? rubricLabelFor(valStr) : null;
+
+        if (rubricLabel !== null) {
+          displayValue = rubricLabel;
+          rawScore = Number(valStr);
+          if (rawScore === 0) isIssue = true;      // no evidence of the standard yet
+        }
+        else if ((lowerVal === 'true' || valStr === '1') && !col.isSummaryStat) displayValue = 'Complete';
         else if ((valStr === '0' || lowerVal === 'm' || lowerVal === 'false') && !col.isSummaryStat) { displayValue = 'Missing'; isIssue = true; }
         else if (lowerVal === 'ex') { displayValue = 'Exempt'; isExempt = true; }
         else if (lowerVal === 'i') { displayValue = 'Incomplete'; isIssue = true; }
@@ -906,6 +971,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
           category: col.finalCategory,
           name: expandAssignmentPrefix(col.finalName),
           value: displayValue,
+          rawScore: rawScore,
           note: rowNotes[idx],
           bgColor: col.bgColor,
           fontColor: col.fontColor,
@@ -918,10 +984,14 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
       }
     });
 
+    // Once a lab score renders as "Meeting", parseFloat on the label is NaN, so
+    // the below-4 rule reads the score captured alongside it instead.
     const hasActualMissingWork = reportRows.some(item =>
       !item.isQuizOrWebAssign && !item.isSummaryStat && (
         item.value === 'Missing' ||
-        item.value === 'Incomplete' || (subjectName === "AP Biology" && item.name.toLowerCase().startsWith("lab") && parseFloat(item.value) < 4)
+        item.value === 'Incomplete' ||
+        (subjectName === "AP Biology" && item.name.toLowerCase().startsWith("lab") &&
+         item.rawScore !== null && item.rawScore < 4)
       )
     );
 
