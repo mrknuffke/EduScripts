@@ -124,6 +124,79 @@ check("drive mode: no destination section", (drive.match(/class="dest-pill/g) ||
 check("drive mode: student-only still forced for preview",
   drive.indexOf('value="student" checked hidden') > -1, true);
 
+// =================== completion encouragement ===============================
+out.push("\n== 7. Completion encouragement ==");
+
+function tierOf(name, value, isParent) {
+  var note = buildEncouragementNote(statRows(name, value), !!isParent);
+  return note ? note.tier : null;
+}
+
+// Reading the percentage, in either direction and either scale.
+check("reads Completion Percentage", findCompletionPercent(statRows("Completion Percentage", "67")), 67);
+check("reads a 0-1 fraction", findCompletionPercent(statRows("Completion Percentage", "0.67")), 67);
+check("treats 1 as 100%", findCompletionPercent(statRows("Completion Percentage", "1")), 100);
+check("strips a percent sign", findCompletionPercent(statRows("Completion Rate", "45%")), 45);
+check("inverts % Incomplete", findCompletionPercent(statRows("% Incomplete", "30%")), 70);
+check("ignores a raw missing COUNT", findCompletionPercent(statRows("Missing Assignments", "3")), null);
+check("no completion stat at all", findCompletionPercent([{ name: "Lab 1", value: "1", isSummaryStat: false }]), null);
+
+// Tier boundaries.
+check("100% produces no note", tierOf("Completion Percentage", "100"), null);
+check("99% is minor", tierOf("Completion Percentage", "99"), "minor");
+check("80% is minor (boundary)", tierOf("Completion Percentage", "80"), "minor");
+check("79.9% is moderate", tierOf("Completion Percentage", "79.9"), "moderate");
+check("50% is moderate (boundary)", tierOf("Completion Percentage", "50"), "moderate");
+check("49.9% is urgent", tierOf("Completion Percentage", "49.9"), "urgent");
+check("0% is urgent", tierOf("Completion Percentage", "0"), "urgent");
+
+// Every tier offers a way to reach out and never forecloses hope.
+["99", "65", "20"].forEach(function (v) {
+  var note = buildEncouragementNote(statRows("Completion Percentage", v), false);
+  check(v + "%: three concrete steps", note.steps.length, 3);
+  check(v + "%: invites contact",
+    /email me|book a time|book an appointment|reply to this email|get in touch|reach out/i.test(
+      note.steps.join(" ") + " " + note.closing), true);
+  check(v + "%: shows the actual percentage", note.intro.indexOf(v + "%") > -1, true);
+  check(v + "%: no despairing language",
+    /too late|no hope|hopeless|give up|beyond saving|failed|failure/i.test(
+      note.heading + " " + note.intro + " " + note.steps.join(" ") + " " + note.closing), false);
+  check(v + "%: no blaming language",
+    /lazy|careless|excuse|disappoint|unacceptable|should have|your own fault/i.test(
+      note.heading + " " + note.intro + " " + note.steps.join(" ") + " " + note.closing), false);
+});
+
+// Parent wording differs from student wording.
+var studentNote = buildEncouragementNote(statRows("Completion Percentage", "65"), false);
+var parentNote = buildEncouragementNote(statRows("Completion Percentage", "65"), true);
+check("parent note addresses the student in third person",
+  parentNote.intro.indexOf("Your student's") > -1, true);
+check("student note addresses the student directly",
+  studentNote.intro.indexOf("Your completion") > -1, true);
+check("same tier for both audiences", parentNote.tier, studentNote.tier);
+
+// The configured reply-to address is surfaced when one is set.
+STUBBED_REPLY_TO = "";
+check("no reply-to configured: no address in closing",
+  /reach me at/.test(buildEncouragementNote(statRows("Completion Percentage", "65"), false).closing), false);
+STUBBED_REPLY_TO = "dknuffke@sas.edu.sg";
+check("reply-to configured: address offered",
+  buildEncouragementNote(statRows("Completion Percentage", "65"), false).closing.indexOf("dknuffke@sas.edu.sg") > -1, true);
+STUBBED_REPLY_TO = "";
+
+// HTML rendering.
+var urgentHtml = generateHtmlEncouragement(statRows("Completion Percentage", "20"), false);
+check("html: renders a block", urgentHtml.indexOf("<div") === 0, true);
+check("html: three list items", (urgentHtml.match(/<li /g) || []).length, 3);
+check("html: urgent uses the strongest accent", urgentHtml.indexOf("#c62828") > -1, true);
+check("html: minor uses the calm accent",
+  generateHtmlEncouragement(statRows("Completion Percentage", "90"), false).indexOf("#1a73e8") > -1, true);
+check("html: moderate uses the warning accent",
+  generateHtmlEncouragement(statRows("Completion Percentage", "65"), false).indexOf("#ef6c00") > -1, true);
+check("html: nothing at 100%", generateHtmlEncouragement(statRows("Completion Percentage", "100"), false), "");
+check("html: nothing when no completion stat is present",
+  generateHtmlEncouragement([{ name: "Lab 1", value: "1", isSummaryStat: false }], false), "");
+
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));
 console.log(out.join("\n"));

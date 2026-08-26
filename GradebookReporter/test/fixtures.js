@@ -171,3 +171,18 @@ var DIALOG_SECTIONS = [
     { row: 8, name: 'Knuffke, Sam', email: '', parentEmail: '', isMismatch: false }
   ]}
 ];
+
+// ===========================================================================
+//  Encouragement-note harness. buildEncouragementNote reads the configured
+//  reply-to address; stub it so tests control whether one is set.
+// ===========================================================================
+var STUBBED_REPLY_TO = "";
+function getReplyToEmail() { return STUBBED_REPLY_TO; }
+
+/** One participation stat row, plus a normal assignment row for realism. */
+function statRows(name, value) {
+  return [
+    { name: name, value: value, isSummaryStat: true },
+    { name: "Lab 1", value: "Complete", isSummaryStat: false }
+  ];
+}

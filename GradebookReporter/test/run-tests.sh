@@ -25,7 +25,10 @@ roster = slice_between("// --- ROSTER SCANNING",
                        "/**\n * Scans the sheet and opens the Student Selector Dialog")
 selector = slice_between("function buildStudentSelectorHtml",
                          "\n/**\n * Shows the tutorial sidebar.")
-io.open(sys.argv[1], "w", encoding="utf-8").write(roster + "\n" + selector + "\n")
+encouragement = slice_between("// --- COMPLETION ENCOURAGEMENT ---",
+                              "function generateHtmlSummaryStats(rows) {")
+io.open(sys.argv[1], "w", encoding="utf-8").write(
+    roster + "\n" + selector + "\n" + encouragement + "\n")
 PY
 
 cat "$WORK/extracted.js" test/fixtures.js test/assertions.js > "$WORK/suite.js"

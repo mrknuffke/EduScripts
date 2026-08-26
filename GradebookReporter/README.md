@@ -19,6 +19,7 @@ Gradebook Reporter is a Google Apps Script utility that generates individual stu
 -   **Student Selector**: A UI dialog that groups students into one collapsible card per class section, with a section filter, per-section select-all, and a live count of what's selected.
 -   **Preview Mode**: Preview up to 10 reports with clear separation to verify layout before sending.
 -   **Fun Feedback**: Includes a library of silly, encouraging emoji puns for students with no missing work.
+-   **Tiered Encouragement**: When completion is below 100%, the report adds a supportive note scaled to how much work is outstanding - light encouragement above 80%, a clearer flag between 50% and 80%, and the firmest note below 50%. Every tier gives concrete next steps and invites the student (or parent) to email or book a time; none of them blame, and none suggest the situation is beyond recovery. The note reads the "Completion Percentage" (or "% Incomplete") participation stat, handling both 0-1 and 0-100 scales, and appears in email, preview, and Drive reports.
 
 ## Installation
 1.  Open the Google Sheet where you wish to use the reporter.
