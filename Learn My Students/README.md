@@ -61,7 +61,7 @@ At the end of every study session, the app calculates your overall accuracy and 
 | **30% – 54%** | **🌱 Emerging** | Gentle Sprouting Bounce & Cheerful 2-Tone Chime |
 | **0% – 29%** | **🫥 Not Yet Evident** | Silly Wobbly Shake & Playful Boing Sound Effect |
 
-*💡 **Tip:** On the Session Complete screen, click **Study Again (Same Session)** to instantly re-run the same class drill!*
+*💡 **Tip:** On the Session Complete screen, click **🎯 Practice Missed Names** to immediately drill the names you missed without advancing the rest of the class schedule, or click **🔄 Drill All Names (Full Deck)** to re-run the entire roster!*
 
 ---
 

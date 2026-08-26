@@ -470,27 +470,40 @@
   // --- SCHEDULER (LEITNER §7) ---
   const BOX_INTERVALS = [0, 1, 3, 6, 12, 25]; // 1-indexed by box number
 
-  function startStudySession(decksToStudy, isDrillEverything = false) {
-    // Increment sessionCount for each involved deck
-    decksToStudy.forEach(deck => {
-      deck.sessionCount = (deck.sessionCount || 0) + 1;
-      deck.updatedAt = new Date().toISOString();
-    });
-    setUnsaved(true);
+  function startStudySession(decksToStudy, modeOrIsDrill = false, specificCards = null) {
+    const isMissedDrill = (modeOrIsDrill === 'missed' || (modeOrIsDrill === true && Array.isArray(specificCards) && specificCards.length > 0));
+    const isDrillEverything = (modeOrIsDrill === 'all' || modeOrIsDrill === 'drill_all' || (modeOrIsDrill === true && !isMissedDrill));
 
-    let candidateCards = [];
-    decksToStudy.forEach(deck => {
-      deck.cards.forEach(card => {
-        candidateCards.push({ card, deck });
+    if (!isMissedDrill) {
+      // Increment sessionCount for each involved deck on regular / full drill sessions
+      decksToStudy.forEach(deck => {
+        deck.sessionCount = (deck.sessionCount || 0) + 1;
+        deck.updatedAt = new Date().toISOString();
       });
-    });
+      setUnsaved(true);
+    }
 
     let sessionQueue = [];
 
-    if (isDrillEverything) {
+    if (isMissedDrill && specificCards && specificCards.length > 0) {
+      // Review specified missed cards in shuffled order
+      sessionQueue = specificCards.slice().sort(() => Math.random() - 0.5);
+    } else if (isDrillEverything) {
+      let candidateCards = [];
+      decksToStudy.forEach(deck => {
+        deck.cards.forEach(card => {
+          candidateCards.push({ card, deck });
+        });
+      });
       // Review every card in random order
       sessionQueue = candidateCards.sort(() => Math.random() - 0.5);
     } else {
+      let candidateCards = [];
+      decksToStudy.forEach(deck => {
+        deck.cards.forEach(card => {
+          candidateCards.push({ card, deck });
+        });
+      });
       // Due cards: dueSession <= deck.sessionCount
       const dueCandidates = candidateCards.filter(item => item.card.dueSession <= item.deck.sessionCount);
 
@@ -515,6 +528,7 @@
       queue: sessionQueue,
       currentIndex: 0,
       isDrillEverything,
+      isMissedDrill,
       stats: { correct: 0, partial: 0, missed: 0 },
       missedCards: [],
       deckStatsMap: new Map()
@@ -752,8 +766,8 @@
     showScreen('import');
   }
 
-  function launchSession(decks, isDrillEverything) {
-    const session = startStudySession(decks, isDrillEverything);
+  function launchSession(decks, modeOrIsDrill = false, specificCards = null) {
+    const session = startStudySession(decks, modeOrIsDrill, specificCards);
     if (session.queue.length === 0) {
       alert('No cards are currently due in this session! Use "Drill All" to review anyway.');
       renderHome();
@@ -810,7 +824,14 @@
 
     updateStudentNameDatalist(activeSession.decks);
 
-    document.getElementById('study-deck-title').textContent = currentItem.deck.deckName;
+    const titleEl = document.getElementById('study-deck-title');
+    if (activeSession.isMissedDrill) {
+      titleEl.innerHTML = `${escapeHtml(currentItem.deck.deckName)} <span class="study-mode-badge">🎯 Practice Missed</span>`;
+    } else if (activeSession.isDrillEverything) {
+      titleEl.innerHTML = `${escapeHtml(currentItem.deck.deckName)} <span class="study-mode-badge">🔄 Full Drill</span>`;
+    } else {
+      titleEl.textContent = currentItem.deck.deckName;
+    }
     document.getElementById('study-count-correct').textContent = activeSession.stats.correct;
     document.getElementById('study-count-partial').textContent = activeSession.stats.partial;
     document.getElementById('study-count-missed').textContent = activeSession.stats.missed;
@@ -1159,11 +1180,17 @@
     // Missed cards list with delete option (§8.4)
     const missedListEl = document.getElementById('missed-cards-list');
     const missedSection = document.getElementById('missed-cards-section');
+    const practiceMissedBtn = document.getElementById('btn-practice-missed');
 
     if (activeSession.missedCards.length === 0) {
       missedSection.classList.add('hidden');
+      if (practiceMissedBtn) practiceMissedBtn.classList.add('hidden');
     } else {
       missedSection.classList.remove('hidden');
+      if (practiceMissedBtn) {
+        practiceMissedBtn.classList.remove('hidden');
+        practiceMissedBtn.textContent = `🎯 Practice Missed Names (${activeSession.missedCards.length})`;
+      }
       missedListEl.innerHTML = '';
 
       activeSession.missedCards.forEach((item) => {
@@ -1186,7 +1213,14 @@
           activeSession.decks.forEach(deck => {
             deck.cards = deck.cards.filter(c => c.id !== cardId);
           });
+          activeSession.missedCards = activeSession.missedCards.filter(item => item.card.id !== cardId);
           e.target.closest('.missed-card-row').remove();
+          if (activeSession.missedCards.length === 0) {
+            missedSection.classList.add('hidden');
+            if (practiceMissedBtn) practiceMissedBtn.classList.add('hidden');
+          } else if (practiceMissedBtn) {
+            practiceMissedBtn.textContent = `🎯 Practice Missed Names (${activeSession.missedCards.length})`;
+          }
           setUnsaved(true);
           persistDecksToStorage();
         });
@@ -1853,6 +1887,17 @@
     if (collectiveHomeBtn) {
       collectiveHomeBtn.addEventListener('click', () => {
         exportCollectiveJSON(loadedDecks);
+      });
+    }
+
+    const practiceMissedBtn = document.getElementById('btn-practice-missed');
+    if (practiceMissedBtn) {
+      practiceMissedBtn.addEventListener('click', () => {
+        if (activeSession && activeSession.missedCards && activeSession.missedCards.length > 0) {
+          const missedList = [...activeSession.missedCards];
+          const involvedDecks = Array.from(new Set(missedList.map(item => item.deck)));
+          launchSession(involvedDecks, 'missed', missedList);
+        }
       });
     }
 

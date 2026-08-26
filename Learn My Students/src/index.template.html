@@ -223,7 +223,10 @@
         </div>
 
         <div class="summary-section" id="missed-cards-section">
-          <h3>Names Missed This Session</h3>
+          <div class="missed-section-header">
+            <h3>Names Missed This Session</h3>
+            <button id="btn-practice-missed" class="btn primary btn-practice-missed pulse" type="button">🎯 Practice Missed Names</button>
+          </div>
           <div id="missed-cards-list" class="missed-cards-list"></div>
         </div>
 
@@ -235,8 +238,8 @@
             </div>
             <p class="save-deck-hint">Save all classes into one collective <code>.deck.json</code> file or separate files</p>
           </div>
-          <button id="btn-restart-session" class="btn primary">Study Again (Same Session)</button>
-          <button id="btn-continue-studying" class="btn secondary">Return to Home</button>
+          <button id="btn-restart-session" class="btn secondary">🔄 Drill All Names (Full Deck)</button>
+          <button id="btn-continue-studying" class="btn primary">Return to Home</button>
         </div>
       </div>
     </section>
