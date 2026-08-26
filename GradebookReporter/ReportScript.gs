@@ -347,6 +347,36 @@ function columnHasLabelText(data, colIndex, startRow) {
 }
 
 /**
+ * Decides whether a column holds graded assessment work.
+ *
+ * The standards row and the category label are matched against the full
+ * keyword list. The column header is matched too, but only against keywords
+ * long enough to be unambiguous: the two-letter "wa" would otherwise fire on
+ * ordinary headers such as "Water Stations".
+ *
+ * Without the header check, a scored column whose standards row and category
+ * say nothing recognisable - "Formative 1.1", say - is never reported, because
+ * a score is not a missing-work issue and nothing else classifies it.
+ */
+function matchesAssessmentColumn(header, standard, category) {
+  const ASSESSMENT_KEYWORDS = ['quiz', 'test', 'exam', 'assess', 'wa', 'webassign',
+                               'unit', 'quest', 'lab', 'formative', 'summative'];
+
+  const lowerHeader = String(header || "").toLowerCase().trim();
+  const lowerStandard = String(standard || "").toLowerCase().trim();
+  const lowerCategory = String(category || "").toLowerCase().trim();
+
+  const inStandardOrCategory = ASSESSMENT_KEYWORDS.some(function (k) {
+    return lowerStandard.includes(k) || lowerCategory.includes(k);
+  });
+  if (inStandardOrCategory) return true;
+
+  return ASSESSMENT_KEYWORDS.some(function (k) {
+    return k.length >= 4 && lowerHeader.includes(k);
+  });
+}
+
+/**
  * Builds the per-column category labels from the category header row.
  *
  * Labels are filled rightwards so a merged header spanning several assignment
@@ -773,11 +803,10 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
     const lowerCategory = col.finalCategory ? col.finalCategory.toLowerCase().trim() : "";
 
     // Heuristics
-    const assessmentKeywords = ['quiz', 'test', 'exam', 'assess', 'wa', 'webassign', 'unit', 'quest', 'lab'];
     const headerScoreKeywords = ['raw', 'score', 'percent', '%', 'letter', 'grade', 'points', 'pts'];
     const summaryKeywords = ['completion', 'missing', 'participation', 'rate'];
 
-    const matchesAssessment = assessmentKeywords.some(k => lowerStandard.includes(k) || lowerCategory.includes(k));
+    const matchesAssessment = matchesAssessmentColumn(col.rawHeader, col.standard, col.finalCategory);
     const matchesScoreHeader = headerScoreKeywords.some(k => lowerHeader.includes(k));
 
     // Logic: It's a grouped assessment if Row 3 OR Category has a keyword OR (Row 3 exists/is used AND Row 2 looks like a score header)
@@ -866,7 +895,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
       let shouldReport = false;
       if (isIssue || isExempt) shouldReport = true;
       if (subjectName === "Chemistry" && col.isSummativeStandard) shouldReport = true;
-      if (col.isQuizOrWebAssign && displayValue !== "-") shouldReport = true;
+      if (col.isQuizOrWebAssign && displayValue !== "-" && String(displayValue).trim() !== "") shouldReport = true;
       if (col.isSummaryStat) shouldReport = true;
 
       // A column with no header and no category has nothing to show a student.

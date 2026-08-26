@@ -42,7 +42,7 @@ Gradebook Reporter is a Google Apps Script utility that generates individual stu
 -   **Class Sections** (optional, two interchangeable options):
     -   Put the section name (e.g. `Block 1`) in Column A of every student row, **or**
     -   Give each class a heading row containing only the section name - no email, no grades. Row styling is optional.
--   **Keywords**: Supports "Quiz", "Test", "Quest", "Lab", "WebAssign", "unit", "assess" for automatic grouping.
+-   **Keywords**: Supports "Quiz", "Test", "Quest", "Lab", "WebAssign", "unit", "assess", "formative", "summative" for automatic grouping. A match in the Standards row or the category label uses the full list; the **column header** is matched too, but only against keywords of four characters or more, so the short "wa" cannot fire on an ordinary header like "Water Stations". Columns identified this way report their score even when nothing is missing - that is how a scored column such as `Formative 1.1` reaches the report. Note the consequence: a header containing "test" (e.g. `AC: Complete Pre-Test`) is treated as an assessment and will appear as `Complete` rather than being omitted.
 -   Use `Gradebook Tools` > `Generate Demo Gradebook` to see the expected format.
 -   **Category row (Row 1)**: Labels here group assignments in the report and fill rightwards, so a merged header covers its whole span. A label placed above the roster columns (e.g. `Admin` over Name/Email) is treated as describing those columns and is never applied to assignments. An assignment column with no category above it is grouped under `General` - if it should belong to the group beside it, extend that label over its column.
 

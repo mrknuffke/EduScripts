@@ -223,6 +223,43 @@ check("missing category row yields nothing", resolveCategoryRow(null, 2).length,
 check("blank category row stays blank", resolveCategoryRow(["", "", "", ""], 1), ["", "", "", ""]);
 check("non-string cells tolerated", resolveCategoryRow([null, undefined, "Labs", ""], 1), ["", "", "Labs", "Labs"]);
 
+// =================== assessment column detection ============================
+out.push("\n== 9. Assessment columns ==");
+
+// The Chem sheet's scored formative column: nothing recognisable in the
+// standards row or category, so only the header can classify it.
+check("scored 'Formative 1.1' recognised by header",
+  matchesAssessmentColumn("Formative 1.1", "D", "Formative Work"), true);
+check("'Summative 2.3' recognised by header",
+  matchesAssessmentColumn("Summative 2.3", "", ""), true);
+check("'Unit 1 Quiz' recognised by header",
+  matchesAssessmentColumn("Unit 1 Quiz", "", ""), true);
+
+// Still matched via the standards row or category, as before.
+check("matched by category", matchesAssessmentColumn("1.1", "", "Topic Quest Labs"), true);
+check("matched by standards row", matchesAssessmentColumn("1.1", "Lab Skills", ""), true);
+check("short 'wa' still matches in a category", matchesAssessmentColumn("1.1", "", "WA 3"), true);
+
+// The two-letter keyword must not fire on ordinary headers.
+check("'Water Stations' header is not an assessment",
+  matchesAssessmentColumn("AC: Water Stations", "", ""), false);
+check("'ID: 1.2 Water' header is not an assessment",
+  matchesAssessmentColumn("ID: 1.2 Water", "", ""), false);
+check("'AC: Macromolecules' is not an assessment",
+  matchesAssessmentColumn("AC: Macromolecules", "", ""), false);
+check("'Initial Appointment' is not an assessment",
+  matchesAssessmentColumn("AC: Initial Appointment", "", ""), false);
+check("'Journal Submitted' is not an assessment",
+  matchesAssessmentColumn("AC: Journal Submitted", "", ""), false);
+check("empty everything is not an assessment",
+  matchesAssessmentColumn("", "", ""), false);
+check("null inputs tolerated",
+  matchesAssessmentColumn(null, null, null), false);
+
+// Documented consequence: a header containing "test" now reports even when done.
+check("'Complete Pre-Test' header DOES match (see README note)",
+  matchesAssessmentColumn("AC: Complete Pre-Test", "", ""), true);
+
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));
 console.log(out.join("\n"));
