@@ -308,6 +308,80 @@ check("unknown subject never uses the rubric",
 check("a rubric 1 is Emerging, not Complete", rubricLabelFor("1"), "Emerging");
 check("a rubric 0 is Not Yet Evident, not Missing", rubricLabelFor("0"), "Not Yet Evident");
 
+// =================== AP Bio lab standard note ===============================
+out.push("\n== 11. Lab standard note ==");
+
+function labRow(name, score, label) {
+  return { name: name, value: label, rawScore: score, isRubricScored: true, isSummaryStat: false };
+}
+function plainRow(name, value) {
+  return { name: name, value: value, rawScore: null, isRubricScored: false, isSummaryStat: false };
+}
+
+// Only AP Biology, and only when the report actually contains labs.
+check("not shown for Chemistry",
+  buildLabStandardNote([labRow("Lab 1", 3, "Meeting")], "Chemistry", false), null);
+check("not shown for an unknown subject",
+  buildLabStandardNote([labRow("Lab 1", 3, "Meeting")], "Grade", false), null);
+check("not shown when the report has no labs",
+  buildLabStandardNote([plainRow("ID: 1.2 Water", "Complete")], "AP Biology", false), null);
+check("not shown for an empty report",
+  buildLabStandardNote([], "AP Biology", false), null);
+
+// The requirement itself is always stated.
+var mixed = buildLabStandardNote(
+  [labRow("Lab 1", 4, "Meeting with Distinction"), labRow("Lab 2", 2, "Developing"),
+   labRow("Lab 3", 3, "Meeting"), plainRow("ID: 1.2 Water", "Complete")],
+  "AP Biology", false);
+check("states the 4 / MWD requirement",
+  /every lab needs to be sitting at 4 \u2014 Meeting with Distinction \u2014 by the end of the semester/.test(mixed.body), true);
+check("names standards-based work",
+  mixed.body.indexOf("full grade claim for standards-based work") > -1, true);
+check("counts only the labs below 4", mixed.status.indexOf("2 labs on this report are") > -1, true);
+check("says scores are not yet final",
+  mixed.status.indexOf("not final until the end of the semester") > -1, true);
+check("invites a revision conversation", /ask me what a revision would need to show/.test(mixed.status), true);
+check("ignores non-lab rows in the count", mixed.status.indexOf("3 labs") === -1, true);
+
+// Singular wording.
+var one = buildLabStandardNote(
+  [labRow("Lab 1", 1, "Emerging"), labRow("Lab 2", 4, "Meeting with Distinction")], "AP Biology", false);
+check("singular phrasing for one lab below", one.status.indexOf("1 lab on this report is") > -1, true);
+
+// All labs already at 4.
+var done = buildLabStandardNote(
+  [labRow("Lab 1", 4, "Meeting with Distinction"), labRow("Lab 2", 4, "Meeting with Distinction")],
+  "AP Biology", false);
+check("all at 4 is acknowledged", done.status.indexOf("already at 4") > -1, true);
+check("all at 4 uses the positive accent", done.accent, "#2E7D32");
+check("still states the requirement when all are at 4",
+  done.body.indexOf("Meeting with Distinction") > -1, true);
+var doneOne = buildLabStandardNote([labRow("Lab 1", 4, "Meeting with Distinction")], "AP Biology", false);
+check("singular phrasing when the only lab is at 4",
+  doneOne.status.indexOf("The lab on this report is already at 4") > -1, true);
+
+// A lab with no numeric score still gets the requirement, without a count.
+var unscored = buildLabStandardNote(
+  [{ name: "Lab 1", value: "Exempt", rawScore: null, isRubricScored: true, isSummaryStat: false }],
+  "AP Biology", false);
+check("unscored labs: requirement shown", unscored.body.length > 0, true);
+check("unscored labs: no count claimed", unscored.status, "");
+
+// Parent wording.
+var parent = buildLabStandardNote(
+  [labRow("Lab 1", 2, "Developing"), labRow("Lab 2", 4, "Meeting with Distinction")], "AP Biology", true);
+check("parent note addresses the student in third person",
+  parent.status.indexOf("they can ask me") > -1, true);
+check("parent note states the same requirement", parent.body, mixed.body);
+
+// Rendering.
+var labHtml = generateHtmlLabStandardNote([labRow("Lab 1", 2, "Developing")], "AP Biology", false);
+check("html: renders a block", labHtml.indexOf("<div") === 0, true);
+check("html: nothing for Chemistry",
+  generateHtmlLabStandardNote([labRow("Lab 1", 2, "Developing")], "Chemistry", false), "");
+check("html: nothing when there are no labs",
+  generateHtmlLabStandardNote([plainRow("ID: 1.2", "Complete")], "AP Biology", false), "");
+
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));
 console.log(out.join("\n"));
