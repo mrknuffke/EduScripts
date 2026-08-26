@@ -197,6 +197,32 @@ check("html: nothing at 100%", generateHtmlEncouragement(statRows("Completion Pe
 check("html: nothing when no completion stat is present",
   generateHtmlEncouragement([{ name: "Lab 1", value: "1", isSummaryStat: false }], false), "");
 
+// =================== assignment categories ==================================
+out.push("\n== 8. Assignment categories ==");
+
+// Chem Sem 1 row 1: "Admin" labels the roster block (Name/Preferred/Email in
+// A-C), "Formative Work" starts at column E, and column D has no label at all.
+var chemCats = resolveCategoryRow(["", "", "Admin", "", "Formative Work", "", ""], 2);
+check("roster label cleared from its own columns", chemCats.slice(0, 3), ["", "", ""]);
+check("roster label does not leak into first assignment", chemCats[3], "");
+check("real category still fills rightwards", chemCats.slice(4), ["Formative Work", "Formative Work", "Formative Work"]);
+
+// A category that does start on the first assignment column still applies.
+var spanning = resolveCategoryRow(["", "", "Admin", "Formative Work", "", "", ""], 2);
+check("category on the first assignment column is kept", spanning[3], "Formative Work");
+check("and fills across its span", spanning.slice(3), ["Formative Work", "Formative Work", "Formative Work", "Formative Work"]);
+
+// Several categories in a row each own their span.
+var multi = resolveCategoryRow(["Section", "", "", "", "Classwork", "", "Homework", ""], 3);
+check("multiple categories keep their own spans",
+  multi.slice(4), ["Classwork", "Classwork", "Homework", "Homework"]);
+check("Section header cleared with the roster block", multi.slice(0, 4), ["", "", "", ""]);
+
+// Degenerate inputs.
+check("missing category row yields nothing", resolveCategoryRow(null, 2).length, 0);
+check("blank category row stays blank", resolveCategoryRow(["", "", "", ""], 1), ["", "", "", ""]);
+check("non-string cells tolerated", resolveCategoryRow([null, undefined, "Labs", ""], 1), ["", "", "Labs", "Labs"]);
+
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));
 console.log(out.join("\n"));

@@ -347,6 +347,32 @@ function columnHasLabelText(data, colIndex, startRow) {
 }
 
 /**
+ * Builds the per-column category labels from the category header row.
+ *
+ * Labels are filled rightwards so a merged header spanning several assignment
+ * columns applies to all of them. Anything sitting above the roster block is
+ * cleared first: a label like "Admin" over Name/Preferred Name/Email describes
+ * those columns, and must not flow into the first assignment column beside it.
+ *
+ * @param {Array} categoryRow - the category header row's display values
+ * @param {number} lastRosterCol - index of the final roster column
+ */
+function resolveCategoryRow(categoryRow, lastRosterCol) {
+  const categories = (categoryRow || []).map(function (v) {
+    return (v === null || v === undefined) ? "" : String(v);
+  });
+
+  for (let i = 0; i <= lastRosterCol && i < categories.length; i++) categories[i] = "";
+
+  for (let i = 1; i < categories.length; i++) {
+    if (categories[i] === "" && categories[i - 1] !== "") {
+      categories[i] = categories[i - 1];
+    }
+  }
+  return categories;
+}
+
+/**
  * Walks the gradebook below the header rows and splits it into students and
  * class-section dividers.
  *
@@ -628,13 +654,9 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
   }
 
   const headers = data[headerRowIndex];
-  // Fill-right Categories for merged headers
-  const categories = data[categoryRowIndex] ? [...data[categoryRowIndex]] : [];
-  for (let i = 1; i < categories.length; i++) {
-    if (categories[i] === "" && categories[i - 1] !== "") {
-      categories[i] = categories[i - 1];
-    }
-  }
+  // Fill-right Categories for merged headers, ignoring any label that belongs
+  // to the roster block rather than to the assignments.
+  const categories = resolveCategoryRow(data[categoryRowIndex], lastRosterCol);
   let emailColIndex = rosterCols.email;
   let parentEmailColIndex = rosterCols.parentEmail;
 
@@ -715,7 +737,10 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
     };
   });
 
-  let lastCategory = "Uncategorized";
+  // Left empty so the table renderers fall back to their neutral "General"
+  // heading; an assignment column with no category above it had been picking
+  // up whatever label happened to sit to its left.
+  let lastCategory = "";
   columnDefs.forEach(col => {
     if (!col || col.id <= lastRosterCol) return;
     if (col.rawCategory && col.rawCategory.trim() !== "") lastCategory = col.rawCategory.trim();
@@ -843,6 +868,9 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
       if (subjectName === "Chemistry" && col.isSummativeStandard) shouldReport = true;
       if (col.isQuizOrWebAssign && displayValue !== "-") shouldReport = true;
       if (col.isSummaryStat) shouldReport = true;
+
+      // A column with no header and no category has nothing to show a student.
+      if (!col.finalName || String(col.finalName).trim() === "") shouldReport = false;
 
       if (shouldReport) {
         reportRows.push({

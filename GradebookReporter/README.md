@@ -44,6 +44,7 @@ Gradebook Reporter is a Google Apps Script utility that generates individual stu
     -   Give each class a heading row containing only the section name - no email, no grades. Row styling is optional.
 -   **Keywords**: Supports "Quiz", "Test", "Quest", "Lab", "WebAssign", "unit", "assess" for automatic grouping.
 -   Use `Gradebook Tools` > `Generate Demo Gradebook` to see the expected format.
+-   **Category row (Row 1)**: Labels here group assignments in the report and fill rightwards, so a merged header covers its whole span. A label placed above the roster columns (e.g. `Admin` over Name/Email) is treated as describing those columns and is never applied to assignments. An assignment column with no category above it is grouped under `General` - if it should belong to the group beside it, extend that label over its column.
 
 ## Testing
 Apps Script cannot be run locally, so the roster-parsing logic is covered by fixture sheets that mirror real gradebook layouts (checkbox columns, merged banner dividers, roster headers below the assignment header, per-row section columns, unstyled headings). The Student Selector dialog is covered too: the suite stubs `HtmlService`, compiles the template the way Apps Script does, and asserts against the rendered HTML, so the `<? ?>` scriptlets are executed rather than eyeballed.
