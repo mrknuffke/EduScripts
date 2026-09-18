@@ -366,13 +366,20 @@ function matchesAssessmentColumn(header, standard, category) {
   const lowerStandard = String(standard || "").toLowerCase().trim();
   const lowerCategory = String(category || "").toLowerCase().trim();
 
+  // Match keywords as whole words, treating hyphens as word-joining characters
+  // so that compound words like "pre-test" do not match the keyword "test".
+  function matchesWholeWord(text, keyword) {
+    var re = new RegExp('(?:^|[^\\w-])' + keyword + '(?:$|[^\\w-])');
+    return re.test(text);
+  }
+
   const inStandardOrCategory = ASSESSMENT_KEYWORDS.some(function (k) {
-    return lowerStandard.includes(k) || lowerCategory.includes(k);
+    return matchesWholeWord(lowerStandard, k) || matchesWholeWord(lowerCategory, k);
   });
   if (inStandardOrCategory) return true;
 
   return ASSESSMENT_KEYWORDS.some(function (k) {
-    return k.length >= 4 && lowerHeader.includes(k);
+    return k.length >= 4 && matchesWholeWord(lowerHeader, k);
   });
 }
 
