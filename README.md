@@ -26,6 +26,7 @@ This repository houses standalone tools organized into modular subdirectories. T
 | [**`Randomizer`**](file:///Users/davidknuffke/Documents/Programming/EduScripts/Randomizer/README.md) | Apps Script | Utility to randomize student lists, construct balanced lab groups, create presentation orders, and shuffle seating charts directly within Google Sheets. |
 | [**`Schedule Tools`**](file:///Users/davidknuffke/Documents/Programming/EduScripts/Schedule Tools/README.md) | Apps Script | Utilities for managing rotational school schedules, period time calculations, and daily timetable formatting. |
 | [**`Miscellaneous Tools`**](file:///Users/davidknuffke/Documents/Programming/EduScripts/Miscellaneous%20Tools/README.md) | Mixed | Collection of standalone utility scripts and single-purpose educational tools, including Google Docs format standardizers, font auditors, and recursive directory file flattener/batch renamer tools (`move_to_root_and_modify.py`). |
+| [**`Test Development Tools`**](file:///Users/davidknuffke/Documents/Programming/EduScripts/Test%20Development%20Tools/README.md) | Mixed | AI-assisted assessment authoring tools. Currently includes `pe-cluster-builder`: generates single-PE item clusters (teacher draft, student paper, answer key, scoring sheet, Google Form) from a JSON spec for any NGSS or standards-based science course. |
 
 ---
 

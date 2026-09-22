@@ -1,0 +1,318 @@
+{
+  "meta": {
+    "standard": "HS-LS2-3",
+    "standard_text": "Construct and revise an explanation based on evidence for the cycling of matter and flow of energy in aerobic and anaerobic conditions. [Clarification Statement: Emphasis is on conceptual understanding of the role of aerobic and anaerobic respiration in different environments.] [Assessment Boundary: Assessment does not include the specific chemical processes of either aerobic or anaerobic respiration.]",
+    "framework": "NGSS",
+    "course": "Biology (worked example)",
+    "unit": "Unit 3 · Matter and Energy in Ecosystems",
+    "title": "Two Compost Bins",
+    "slug": "hs-ls2-3-compost-bins",
+    "delivery": "paper",
+    "duration_min": 40,
+    "resources": "No notes. No calculator needed. No AI assistants.",
+    "distinction_mode": "probe",
+    "mwd_requires_top_gate": false,
+    "min_items_per_bucket": 3,
+    "levels_scope": "per-period",
+    "gate_proportions": { "developing": 0.45, "meeting": 0.70, "top": 0.85 },
+    "sentence_cap_words": 25,
+    "level_labels": ["Not Yet Evident", "Emerging", "Developing", "Meeting", "Meeting with Distinction"],
+    "format": { "paper": "A4", "body_font": "Garamond", "heading_font": "Montserrat Medium", "accent": "4A90A4", "spelling": "UK" },
+    "form": { "teachers": ["<Teacher One>", "<Teacher Two>"], "access_code": "<CODEWORD>", "access_code_help": "Enter the code your teacher gives you at the start of the period.", "collect_emails": true }
+  },
+
+  "scope": [
+    { "code": "LS2-3.1", "text": "Explain how energy from photosynthesis and respiration drives the cycling of matter and flow of energy in an ecosystem." },
+    { "code": "LS2-3.2", "text": "Describe the conditions under which anaerobic respiration occurs." },
+    { "code": "LS2-3.3", "text": "Explain that organisms rearrange the atoms of the matter they take in, and that matter is conserved." },
+    { "code": "LS2-3.4", "text": "Describe photosynthesis as capturing light energy in chemical products that are used as food." },
+    { "code": "LS2-3.5", "text": "Describe cellular respiration as releasing energy from food by rearranging its matter." },
+    { "code": "LS2-3.6", "text": "Explain that every cell gets energy by photosynthesis or by taking in food, and that every cell carries out respiration." },
+    { "code": "LS2-3.7", "text": "Explain that energy drives the flow of matter into and out of cells under aerobic and anaerobic conditions." },
+    { "code": "LS2-3.8", "text": "Revise an explanation when given new evidence, and justify the revision." }
+  ],
+
+  "held_back_terms": [
+    { "term": "ATP", "substitute": "energy the cell can use" },
+    { "term": "glycolysis", "substitute": "not needed at this level" }
+  ],
+
+  "features": [
+    { "id": "F1", "ref": "1a-i", "text": "Explanation includes that energy from photosynthesis and respiration drives the cycling of matter and flow of energy, under aerobic or anaerobic conditions, within an ecosystem.", "in_scope": true, "skill": "LS2-3.1", "exclusion_reason": "" },
+    { "id": "F2", "ref": "1a-ii", "text": "Explanation includes that anaerobic respiration occurs primarily where oxygen is not available.", "in_scope": true, "skill": "LS2-3.2", "exclusion_reason": "" },
+    { "id": "F3", "ref": "2a-i", "text": "All organisms take in matter and rearrange the atoms in chemical reactions.", "in_scope": true, "skill": "LS2-3.3", "exclusion_reason": "" },
+    { "id": "F4", "ref": "2a-ii", "text": "Photosynthesis captures energy in sunlight to make chemical products that can be used as food in cellular respiration.", "in_scope": true, "skill": "LS2-3.4", "exclusion_reason": "" },
+    { "id": "F5", "ref": "2a-iii", "text": "In cellular respiration the matter in food reacts with other compounds, rearranging the matter and releasing energy the cell uses for life processes.", "in_scope": true, "skill": "LS2-3.5", "exclusion_reason": "" },
+    { "id": "F6", "ref": "2b", "text": "Uses a variety of valid and reliable sources for the evidence, which may include theories, simulations, peer review and the students’ own investigations.", "in_scope": false, "skill": "", "exclusion_reason": "No scope code. A timed stand-alone cluster supplies its sources; gathering them is assessed in the unit’s investigation, not here." },
+    { "id": "F7", "ref": "3a-i", "text": "Energy inputs to cells occur either by photosynthesis or by taking in food.", "in_scope": true, "skill": "LS2-3.6", "exclusion_reason": "" },
+    { "id": "F8", "ref": "3a-ii", "text": "Since all cells carry out cellular respiration, all must produce the products of respiration.", "in_scope": true, "skill": "LS2-3.6", "exclusion_reason": "" },
+    { "id": "F9", "ref": "3a-iii", "text": "The flow of matter into and out of cells is driven by energy captured by photosynthesis or obtained from food, and released by respiration.", "in_scope": true, "skill": "LS2-3.7", "exclusion_reason": "" },
+    { "id": "F10", "ref": "3a-iv", "text": "The flow of matter and energy occurs whether respiration is aerobic or anaerobic.", "in_scope": true, "skill": "LS2-3.7", "exclusion_reason": "" },
+    { "id": "F11", "ref": "4a", "text": "Given new data or information, revises the explanation and justifies the revision.", "in_scope": true, "skill": "LS2-3.8", "exclusion_reason": "" }
+  ],
+
+  "buckets": [
+    { "name": "DCI", "label": "DCI · LS2.B Cycles of Matter and Energy Transfer in Ecosystems", "reflection": "C3 vs C4. Most students should earn C3 (heat from respiration). C4 separates students who link methane to missing oxygen from those who blame temperature. High C3 with low C4 says anaerobic conditions were learned as a label, not a cause." },
+    { "name": "SEP", "label": "SEP · Constructing Explanations", "reflection": "C8 vs C9. C8 applies the explanation to data in hand; C9 revises it from new evidence. High C8 with low C9 means revision has not been practised as a move of its own." },
+    { "name": "CCC", "label": "CCC · Energy and Matter", "reflection": "C10 vs C11. C10 recognises that matter cycles while energy flows through; C11 uses that idea to predict. High C10 with low C11 means the idea is recognised but not yet used." }
+  ],
+
+  "stimulus": {
+    "context": [
+      "The garden club at Northfield School wanted to know what happens to canteen food scraps when they are handled in two different ways. The club’s technician, Mr Tan, set up two bins and recorded the results. You did not run this investigation. Your job is to explain what happened.",
+      "Both bins started with 10.0 kg of the same chopped fruit and vegetable scraps. They sat side by side in the shade for 20 days. Bin A was left open and turned every day, so air mixed through the scraps. Bin B was sealed with a lid on day 1, so no fresh air could get in. On day 20, Mr Tan used the same gas meter to test the air trapped just above the scraps in each bin."
+    ],
+    "blocks": [
+      {
+        "key": "table1",
+        "kind": "table",
+        "title": "Table 1. Mr Tan’s results after 20 days",
+        "columns": ["Measurement", "Bin A (open, turned daily)", "Bin B (sealed)"],
+        "rows": [
+          ["Starting mass of scraps (kg)", "10.0", "10.0"],
+          ["Mass of scraps on day 20 (kg)", "6.2", "8.6"],
+          ["Mass lost (kg)", "3.8", "1.4"],
+          ["Highest temperature inside the scraps (°C)", "58", "31"],
+          ["Oxygen (O₂) in the air above the scraps, day 20 (%)", "19", "0"],
+          ["Carbon dioxide (CO₂) in the air above the scraps, day 20 (%)", "3", "41"],
+          ["Methane (CH₄) in the air above the scraps, day 20 (%)", "0", "54"]
+        ],
+        "note": "Air temperature in the shade stayed between 27 and 30 °C. Illustrative data constructed for this assessment.",
+        "source": "",
+        "constructed": true,
+        "image": ""
+      },
+      {
+        "key": "sourceB",
+        "kind": "text",
+        "title": "Source B. Life without sunlight",
+        "text": [
+          "In 1977, scientists diving in the submersible Alvin found crowded communities of giant tube worms, clams and crabs around hot-water vents on the sea floor near the Galápagos Islands, about 2500 m deep. No sunlight reaches that depth.",
+          "The water pouring out of the vents is rich in hydrogen sulfide (H₂S). Microbes living inside the tube worms use chemical energy from hydrogen sulfide to make sugars from carbon dioxide. This is called chemosynthesis. The tube worms get all their food from these microbes."
+        ],
+        "source": "Summary of the 1977 Galápagos Rift discoveries, from public materials by Woods Hole Oceanographic Institution and NOAA Ocean Exploration.",
+        "constructed": false,
+        "image": ""
+      }
+    ],
+    "glossary": [
+      { "term": "aerobic", "def": "with oxygen available" },
+      { "term": "anaerobic", "def": "without oxygen available" },
+      { "term": "cellular respiration", "def": "the process cells use to release energy from food" },
+      { "term": "microbes", "def": "living things too small to see, such as bacteria and fungi" },
+      { "term": "methane (CH₄)", "def": "a gas that burns, made by some microbes" },
+      { "term": "chemosynthesis", "def": "making sugars using energy from chemicals instead of from light" }
+    ]
+  },
+
+  "parts": [
+    { "n": 1, "title": "Part 1 · What happened in the bins", "help": "Use the context and Table 1." },
+    { "n": 2, "title": "Part 2 · Explaining the bins", "help": "Written answers. Use values from Table 1 wherever you can." }
+  ],
+
+  "criteria": [
+    {
+      "id": "C1", "item": "1", "order": 1, "part": 1, "type": "mc",
+      "buckets": ["DCI"], "skill": "LS2-3.4", "feature": "F4",
+      "stem": "The food scraps held stored energy on day 1. Where did that energy originally come from?",
+      "help": "",
+      "choices": [
+        { "text": "Nutrients the crop plants absorbed from the soil", "key": false, "misconception": "Plants get their energy or mass from soil." },
+        { "text": "Sunlight captured by the crop plants during photosynthesis", "key": true, "misconception": "" },
+        { "text": "Water the crop plants took up through their roots", "key": false, "misconception": "Water is the plant’s energy source." },
+        { "text": "Heat produced by the microbes inside the bins", "key": false, "misconception": "Confuses an energy output of decomposition with the original source." }
+      ],
+      "criterion": "Identifies sunlight captured by photosynthesis in the crop plants as the original source of the energy stored in the scraps.",
+      "earns": "Option B.",
+      "cue": "Energy source: sunlight via photosynthesis"
+    },
+    {
+      "id": "C2", "item": "2", "order": 2, "part": 1, "type": "mc",
+      "buckets": ["DCI"], "skill": "LS2-3.3", "feature": "F3",
+      "stem": "Bin A lost the most mass. Where did most of the missing mass go?",
+      "help": "",
+      "choices": [
+        { "text": "It was destroyed as microbes broke the food down", "key": false, "misconception": "Matter is destroyed during decomposition." },
+        { "text": "It was turned into energy that microbes used to grow", "key": false, "misconception": "Matter is converted into energy." },
+        { "text": "It was stored in the bodies of the growing microbes", "key": false, "misconception": "Most decomposed matter ends up as decomposer biomass." },
+        { "text": "It left as gases made from the food’s rearranged atoms", "key": true, "misconception": "" }
+      ],
+      "criterion": "Identifies that most of the lost mass left the bin as gases formed when microbes rearranged the atoms of the food (matter conserved, not destroyed or converted to energy).",
+      "earns": "Option D.",
+      "cue": "Mass left as gas; atoms rearranged"
+    },
+    {
+      "id": "C3", "item": "3", "order": 3, "part": 1, "type": "mc",
+      "buckets": ["DCI"], "skill": "LS2-3.5", "feature": "F5",
+      "stem": "Bin A became much hotter than the air around it. Which statement best explains this?",
+      "help": "Look at the temperatures in Table 1 and the note under it.",
+      "choices": [
+        { "text": "Microbes released energy from food by respiration, and some escaped as heat", "key": true, "misconception": "" },
+        { "text": "Sunlight trapped inside the open bin warmed the scraps like a greenhouse", "key": false, "misconception": "Heat came from sunlight (the bins were in shade)." },
+        { "text": "Turning the scraps every day made friction that heated them up", "key": false, "misconception": "A mechanical cause, ignoring respiration." },
+        { "text": "Microbes made new energy as they broke down the food scraps", "key": false, "misconception": "Energy is created during decomposition." }
+      ],
+      "criterion": "Explains the heat in Bin A as energy released from food by microbial cellular respiration, part of which is lost as heat.",
+      "earns": "Option A.",
+      "cue": "Heat from respiration of food"
+    },
+    {
+      "id": "C4", "item": "4a", "order": 4, "part": 1, "type": "mc",
+      "buckets": ["DCI"], "skill": "LS2-3.2", "feature": "F2",
+      "stem": "Methane was found only in Bin B. Which statement best explains why?",
+      "help": "",
+      "choices": [
+        { "text": "Bin B was cooler, and methane only forms at low temperatures", "key": false, "misconception": "Temperature, not oxygen, decides which respiration occurs." },
+        { "text": "The methane in Bin A escaped before the meter could test it", "key": false, "misconception": "Treats the result as a measuring fault, ignoring that both bins were tested the same way." },
+        { "text": "Oxygen ran out in Bin B, so microbes respired without oxygen", "key": true, "misconception": "" },
+        { "text": "Bin B held fewer microbes, so they made a different waste gas", "key": false, "misconception": "The number of microbes, not conditions, decides the products." }
+      ],
+      "criterion": "Links methane appearing only in Bin B to the absence of oxygen in Bin B, so that microbes there respired anaerobically.",
+      "earns": "Option C.",
+      "cue": "No O₂ in B, so anaerobic"
+    },
+    {
+      "id": "C12", "item": "4b", "order": 5, "part": 1, "type": "cr",
+      "buckets": ["DCI"], "skill": "LS2-3.2", "beyond": true, "extends": "F2",
+      "stem": "Mr Tan drills a small hole so a little fresh air leaks into Bin B. Predict what happens to the methane reading, and explain why.",
+      "help": "Two sentences at most.",
+      "sentence_cap": 2, "lines": 4,
+      "criterion": "Predicts that the methane reading falls and explains that with some oxygen now available, more of the microbes’ respiration uses oxygen, so less happens without oxygen.",
+      "earns": "Predicts less methane (falls, or rises more slowly) AND explains it by oxygen now being available to at least part of the bin, so more respiration is aerobic and less is anaerobic. A prediction with no oxygen-based reason does not earn the point.",
+      "cue": "Probe: air leak cuts methane"
+    },
+    {
+      "id": "C5", "item": "5", "order": 6, "part": 1, "type": "mc",
+      "buckets": ["DCI"], "skill": "LS2-3.6", "feature": "F7",
+      "stem": "The microbes in the bins cannot photosynthesise. How do they get the energy they use?",
+      "help": "",
+      "choices": [
+        { "text": "They absorb heat energy from the warm air around the bins", "key": false, "misconception": "Heat from surroundings is an energy input to cells." },
+        { "text": "They take in energy directly from oxygen in the air", "key": false, "misconception": "Oxygen is the energy source." },
+        { "text": "They make their own energy from carbon dioxide and water", "key": false, "misconception": "Confuses decomposers with photosynthesisers." },
+        { "text": "They take in food and release its energy by respiration", "key": true, "misconception": "" }
+      ],
+      "criterion": "Identifies taking in food and releasing its energy by respiration as the energy input for organisms that cannot photosynthesise.",
+      "earns": "Option D.",
+      "cue": "Non-photosynthesisers: energy from food"
+    },
+    {
+      "id": "C6", "item": "6", "order": 7, "part": 1, "type": "mc",
+      "buckets": ["SEP"], "skill": "LS2-3.6", "feature": "F8",
+      "stem": "Carbon dioxide was found in both bins, even though only Bin A had oxygen. Which reasoning best explains this?",
+      "help": "",
+      "choices": [
+        { "text": "Carbon dioxide leaked into Bin B from the air outside", "key": false, "misconception": "Ignores that Bin B was sealed." },
+        { "text": "All cells respire, with or without oxygen, and respiration releases carbon dioxide", "key": true, "misconception": "" },
+        { "text": "Carbon dioxide was left over in Bin B from before it was sealed", "key": false, "misconception": "Attributes the result to starting air, not to the process." },
+        { "text": "Carbon dioxide forms whenever food sits still for a long time", "key": false, "misconception": "A change with no mechanism." }
+      ],
+      "criterion": "Selects the reasoning that all cells carry out respiration, with or without oxygen, and therefore all release respiration products such as carbon dioxide.",
+      "earns": "Option B.",
+      "cue": "All cells respire, so CO₂ in both"
+    },
+    {
+      "id": "C7", "item": "7", "order": 8, "part": 2, "type": "cr",
+      "buckets": ["SEP", "CCC"], "skill": "LS2-3.1", "feature": "F1",
+      "stem": "Write an explanation for why both bins lost mass, even though only Bin A had oxygen. Use at least two values from Table 1.",
+      "help": "Four sentences at most.",
+      "sentence_cap": 4, "lines": 7,
+      "criterion": "SEP: constructs an explanation that accounts for mass loss in both bins and correctly cites at least two values from Table 1, at least one from each bin. CCC: states that energy released from the food by respiration is what drives matter out of the scraps as gases, under both aerobic and anaerobic conditions.",
+      "earns": "Explains that microbes respired the food in both bins (with oxygen in A, without oxygen in B), releasing energy and turning food matter into gases that left the scraps; cites correct values such as 3.8 kg and 1.4 kg lost, or 3% CO₂ in A with 41% CO₂ and 54% CH₄ in B; links the energy released to the matter leaving. Both the SEP and CCC demands must be met for the point.",
+      "cue": "Both bins: respiration drives mass out"
+    },
+    {
+      "id": "C8", "item": "8a", "order": 9, "part": 2, "type": "cr",
+      "buckets": ["SEP"], "skill": "LS2-3.7", "feature": "F10",
+      "stem": "Priya claims that matter stopped cycling in Bin B because no oxygen could get in. Evaluate her claim using evidence from Table 1.",
+      "help": "Three sentences at most.",
+      "sentence_cap": 3, "lines": 6,
+      "criterion": "Rejects the claim, citing Bin B’s mass loss or its gas readings as evidence that food matter was still being rearranged and released without oxygen.",
+      "earns": "States the claim is wrong; cites Bin B’s 1.4 kg mass loss and/or its 41% CO₂ or 54% CH₄ as evidence that matter kept leaving the scraps as gas; states that matter cycling continues without oxygen by a different route.",
+      "cue": "Rejects claim with Bin B data"
+    },
+    {
+      "id": "C13", "item": "8b", "order": 10, "part": 2, "type": "cr",
+      "buckets": ["SEP"], "skill": "LS2-3.7", "beyond": true, "extends": "F10",
+      "stem": "Name one more measurement Mr Tan could make that would make your evaluation stronger. Say what result you would expect.",
+      "help": "Two sentences at most.",
+      "sentence_cap": 2, "lines": 4,
+      "criterion": "Names an additional measurement that would test whether matter kept leaving Bin B, and states a result consistent with the explanation.",
+      "earns": "Names a relevant measurement AND an expected result, e.g. total mass of gas released from Bin B (expect it to roughly match the 1.4 kg lost), repeat sealed bins (expect similar mass loss each time), or microbe numbers in Bin B over time (expect them to grow). A measurement with no expected result does not earn the point.",
+      "cue": "Probe: extra measurement + expected result"
+    },
+    {
+      "id": "C9", "item": "9", "order": 11, "part": 2, "type": "cr",
+      "buckets": ["SEP"], "skill": "LS2-3.8", "feature": "F11",
+      "stem": "Read Source B. A classmate’s explanation includes this sentence: “All the energy in every ecosystem comes from sunlight.” Rewrite the sentence so it fits Source B. Then name the evidence that forced the change.",
+      "help": "Three sentences at most.",
+      "sentence_cap": 3, "lines": 6,
+      "criterion": "Revises the sentence to allow an energy input other than sunlight, and justifies the revision with evidence from Source B. Both required.",
+      "earns": "Revised sentence allows a second energy source (e.g. most ecosystems get their energy from sunlight, but some get it from chemicals such as hydrogen sulfide, captured by microbes) AND cites evidence from Source B: a community living where no sunlight reaches, fed by microbes using chemical energy from vent water. Both required.",
+      "compound": true,
+      "cue": "Revises: chemical energy source, justified"
+    },
+    {
+      "id": "C10", "item": "10", "order": 12, "part": 2, "type": "mc",
+      "buckets": ["CCC"], "skill": "LS2-3.7", "feature": "F9",
+      "stem": "Which statement best describes how energy and matter move through Bin A?",
+      "help": "",
+      "choices": [
+        { "text": "Both energy and matter cycle, returning to plants for reuse", "key": false, "misconception": "Energy cycles like matter." },
+        { "text": "Energy is used up, and matter is destroyed as food breaks down", "key": false, "misconception": "Both energy and matter are destroyed." },
+        { "text": "Matter cycles back to the air and soil, and energy leaves as heat", "key": true, "misconception": "" },
+        { "text": "Matter flows out and is lost, and energy stays stored in the compost", "key": false, "misconception": "Matter is lost; energy stays behind." }
+      ],
+      "criterion": "Identifies that matter cycles back to the environment while energy flows through and leaves the system as heat.",
+      "earns": "Option C.",
+      "cue": "Matter cycles; energy flows out"
+    },
+    {
+      "id": "C11", "item": "11a", "order": 13, "part": 2, "type": "cr",
+      "buckets": ["CCC"], "skill": "LS2-3.7", "feature": "F9",
+      "stem": "The club wants Bin B to keep making methane for a gas stove. Predict what happens to methane output if no new scraps are ever added. Explain your prediction using energy.",
+      "help": "Two sentences at most.",
+      "sentence_cap": 2, "lines": 4,
+      "criterion": "Predicts that methane output falls and stops, and explains that the food is the only energy source driving the microbes’ respiration, so once its energy is released nothing drives further production. Both required.",
+      "earns": "Predicts methane output falls and eventually stops AND explains that the scraps are the energy source for the microbes, and energy is not recycled inside the bin, so production ends when the food is used up. Both required.",
+      "compound": true,
+      "cue": "No new food: methane stops"
+    },
+    {
+      "id": "C14", "item": "11b", "order": 14, "part": 2, "type": "cr",
+      "buckets": ["CCC"], "skill": "LS2-3.1", "beyond": true, "extends": "F9",
+      "stem": "Methane from Bin B is burned in the stove to boil water. Trace where the energy in the flame originally came from.",
+      "help": "Two sentences at most.",
+      "sentence_cap": 2, "lines": 4,
+      "criterion": "Traces the energy in the flame back through at least four transfers in correct order, from sunlight to the flame.",
+      "earns": "At least four links in the correct order, e.g. sunlight, captured by photosynthesis in the crop plants, stored in the food scraps, released by microbes and partly passed into methane, released as heat when the methane burns. Energy is transferred at each step, never created.",
+      "cue": "Probe: sunlight to flame, 4 links"
+    }
+  ],
+
+  "derived_checks": [
+    { "label": "Bin A mass lost", "expr": "10.0 - 6.2", "expected": "3.8", "tolerance": 0.001 },
+    { "label": "Bin B mass lost", "expr": "10.0 - 8.6", "expected": "1.4", "tolerance": 0.001 }
+  ],
+
+  "screening": [
+    { "n": 1, "item": "Phenomenon or problem", "rating": "Yes", "evidence": "Two bins of identical scraps lose different masses and give off different gases.", "change": "" },
+    { "n": 2, "item": "Prompts match the SEP", "rating": "Yes", "evidence": "Items 7, 8a and 9 require constructing, applying and revising an explanation.", "change": "" },
+    { "n": 3, "item": "Multiple, sufficient stimuli", "rating": "Partially", "evidence": "One data table and one text source. Enough for every item, but only one data set.", "change": "Add a second bin trial to Table 1 if time allows; not added by default." },
+    { "n": 4, "item": "Observable DCI", "rating": "Yes", "evidence": "Items 1 to 5 each target one LS2.B feature.", "change": "" },
+    { "n": 5, "item": "Names the CCC", "rating": "Yes", "evidence": "Item 10 names energy and matter; item 11a says “explain using energy”.", "change": "" },
+    { "n": 6, "item": "Progression language", "rating": "Yes", "evidence": "Stems and keys lift phrasing from features 2a-i, 3a-ii and 4a.", "change": "" },
+    { "n": 7, "item": "Space for features", "rating": "Yes", "evidence": "Every constructed response has lines at or above the calibration minimum.", "change": "" },
+    { "n": 8, "item": "Accurate and attributed", "rating": "Partially", "evidence": "Table 1 is labelled illustrative and recomputed by script. Source B is attributed to organisations but not to a specific page.", "change": "Teacher attaches a specific page and access date for Source B." },
+    { "n": 9, "item": "Points to explaining", "rating": "Yes", "evidence": "Items 7 and 9 ask students to explain and revise.", "change": "" },
+    { "n": 10, "item": "Authentic and interesting", "rating": "Yes", "evidence": "A school garden club handling its own canteen scraps, with a named technician.", "change": "" },
+    { "n": 11, "item": "Novel to the unit", "rating": "Yes", "evidence": "The unit storyline uses a pond ecosystem; compost bins are adjacent but new.", "change": "" }
+  ],
+
+  "open_decisions": [
+    { "q": "Table 1 is constructed data. Keep it, or swap in a real class data set?", "default": "Keep, labelled illustrative." },
+    { "q": "Source B needs a specific citation. Attach a page and access date before printing?", "default": "Yes, teacher attaches." },
+    { "q": "Feature 2b (varied, reliable sources) is excluded as out of scope for a timed cluster. Agree?", "default": "Yes." },
+    { "q": "The unit storyline is assumed to use a pond ecosystem. If it used compost, change the context.", "default": "Keep compost bins." }
+  ]
+}

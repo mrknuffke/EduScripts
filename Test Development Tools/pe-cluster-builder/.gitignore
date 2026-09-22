@@ -1,0 +1,9 @@
+# Node dependencies
+node_modules/
+
+# Generated outputs (never commit .docx or .gs outputs)
+out/
+
+# Live work file — stays local, never pushed
+# Finished clusters can be archived as named files in clusters/ instead
+content.json
