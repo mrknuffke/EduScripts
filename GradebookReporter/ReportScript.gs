@@ -347,6 +347,16 @@ function columnHasLabelText(data, colIndex, startRow) {
 }
 
 /**
+ * True when a word in text starts with keyword. Hyphens count as part of a
+ * word, so compound words like "pre-test" and "pre-lab" do not match "test" or
+ * "lab". The end is left open so plurals and stems still match: category
+ * labels like "Labs", "Formatives" and "Topic Questions" depend on it.
+ */
+function matchesWordStart(text, keyword) {
+  return new RegExp('(?:^|[^\\w-])' + keyword).test(text);
+}
+
+/**
  * Decides whether a column holds graded assessment work.
  *
  * The standards row and the category label are matched against the full
@@ -366,20 +376,13 @@ function matchesAssessmentColumn(header, standard, category) {
   const lowerStandard = String(standard || "").toLowerCase().trim();
   const lowerCategory = String(category || "").toLowerCase().trim();
 
-  // Match keywords as whole words, treating hyphens as word-joining characters
-  // so that compound words like "pre-test" do not match the keyword "test".
-  function matchesWholeWord(text, keyword) {
-    var re = new RegExp('(?:^|[^\\w-])' + keyword + '(?:$|[^\\w-])');
-    return re.test(text);
-  }
-
   const inStandardOrCategory = ASSESSMENT_KEYWORDS.some(function (k) {
-    return matchesWholeWord(lowerStandard, k) || matchesWholeWord(lowerCategory, k);
+    return matchesWordStart(lowerStandard, k) || matchesWordStart(lowerCategory, k);
   });
   if (inStandardOrCategory) return true;
 
   return ASSESSMENT_KEYWORDS.some(function (k) {
-    return k.length >= 4 && matchesWholeWord(lowerHeader, k);
+    return k.length >= 4 && matchesWordStart(lowerHeader, k);
   });
 }
 
@@ -400,13 +403,17 @@ const RUBRIC_LABELS = {
  * Returns null for anything that is not exactly 0, 1, 2, 3 or 4, so half marks,
  * percentages, checkbox text and blanks fall through to the normal handling.
  * A blank is deliberately not a zero: "no score yet" is not "Not Yet Evident".
+ *
+ * With roundHalvesDown, a half mark takes the descriptor of the whole number
+ * below it, so an AP Biology lab at 3.5 reports as Meeting.
  */
-function rubricLabelFor(value) {
+function rubricLabelFor(value, roundHalvesDown) {
   const raw = String(value === null || value === undefined ? "" : value).trim();
   if (raw === "") return null;
 
-  const num = Number(raw);
+  let num = Number(raw);
   if (!isFinite(num)) return null;
+  if (roundHalvesDown && num % 1 === 0.5) num = Math.floor(num);
 
   const key = String(num);
   return Object.prototype.hasOwnProperty.call(RUBRIC_LABELS, key) ? RUBRIC_LABELS[key] : null;
@@ -459,7 +466,9 @@ function isRubricScoredColumn(subjectName, header, category, finalName, isSummat
   const name = String(finalName || "").toLowerCase().trim();
 
   if (subjectName === "AP Biology") {
-    return name.indexOf('lab') === 0 || /\blabs?\b/.test(text) || /\blabs?\b/.test(name);
+    // Whole-word match so a "Form: Osmosis Pre-Lab" completion check is not
+    // read as a rubric-scored lab, which turned its 1 into "Emerging".
+    return matchesWordStart(text, 'lab') || matchesWordStart(name, 'lab');
   }
   if (subjectName === "Chemistry" || subjectName === "XL Chemistry") {
     return !!isSummativeStandard ||
@@ -526,6 +535,7 @@ function scanGradebookRoster(sheet) {
   const styles = readBannerStyles(sheet, data.length, [0, cols.name]);
 
   const students = [];
+  const skipped = [];            // rows with an email that were not read as students
   const sectionOrder = [];       // sheet order, not alphabetical
   let currentSection = "";
   let dividerCount = 0;
@@ -562,8 +572,22 @@ function scanGradebookRoster(sheet) {
     if (firstNonEmptyCell(row) === "") continue;
 
     // Summary/statistics and leftover header rows are neither students nor dividers.
-    if (SUMMARY_ROW_WORDS.test(name) || SUMMARY_ROW_WORDS.test(sectionCell)) continue;
-    if (name === '0' || name === 'Student' || name === 'Preferred Name' || name.includes('Name:')) continue;
+    // A row with an email or a "Last, First" name is a person even when the name
+    // contains a summary word: "Jokela, Max" is not a Max row.
+    const hasEmail = email.indexOf('@') > -1 || parentEmail.indexOf('@') > -1;
+    const isNamedPerson = hasEmail || name.indexOf(',') > -1;
+
+    // Any row with an email that ends up excluded is reported back to the
+    // teacher, so a misread row can never drop a student silently.
+    const skip = function (reason) {
+      if (hasEmail) skipped.push({ row: r, name: name, email: email || parentEmail, reason: reason });
+    };
+
+    if (!isNamedPerson && (SUMMARY_ROW_WORDS.test(name) || SUMMARY_ROW_WORDS.test(sectionCell))) continue;
+    if (name === '0' || name === 'Student' || name === 'Preferred Name' || name.includes('Name:')) {
+      skip("its name looks like a header label");
+      continue;
+    }
 
     // A row styled as a banner is a class divider no matter what it contains -
     // these often carry a headcount or a formula alongside the label.
@@ -577,6 +601,9 @@ function scanGradebookRoster(sheet) {
       looksLikePerson);
 
     if (!isStudent) {
+      if (styledDivider) skip("it is formatted like a class banner (dark fill or white text)");
+      else if (name === "") skip("its Name cell is empty");
+
       // A row with data but no name is a standards / date / filter row, not a
       // class divider - unless it is styled as a banner.
       let label = "";
@@ -606,6 +633,7 @@ function scanGradebookRoster(sheet) {
 
   return {
     students: students,
+    skipped: skipped,
     sections: sectionOrder,
     cols: cols,
     dividerCount: dividerCount,
@@ -654,6 +682,14 @@ function groupStudentsBySection(students, sectionOrder) {
 }
 
 /**
+ * One line explaining why a row with an email was left out of the roster,
+ * e.g. "Row 34 (Jokela, Max): its Name cell is empty".
+ */
+function describeSkippedRow(s) {
+  return `Row ${s.row + 1} (${s.name || s.email}): ${s.reason}`;
+}
+
+/**
  * Scans the sheet and opens the Student Selector Dialog
  */
 function showStudentSelector(mode) {
@@ -661,7 +697,10 @@ function showStudentSelector(mode) {
   const roster = scanGradebookRoster(sheet);
 
   if (roster.students.length === 0) {
-    SpreadsheetApp.getUi().alert("No students found. Check your Gradebook format.");
+    const skippedNote = roster.skipped.length === 0 ? "" :
+      "\n\nThese rows have an email but were not read as students:\n" +
+      roster.skipped.map(describeSkippedRow).join("\n");
+    SpreadsheetApp.getUi().alert("No students found. Check your Gradebook format." + skippedNote);
     return;
   }
 
@@ -674,7 +713,7 @@ function showStudentSelector(mode) {
   });
 
   // Generate and Show UI
-  const html = buildStudentSelectorHtml(sections, mode, hasParentEmails);
+  const html = buildStudentSelectorHtml(sections, mode, hasParentEmails, roster.skipped);
   SpreadsheetApp.getUi().showModalDialog(html.setWidth(600).setHeight(700), 'Student Selector');
 }
 
@@ -970,7 +1009,8 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
 
         // A rubric score must be read before the complete/missing mapping,
         // which would otherwise turn 1 into "Complete" and 0 into "Missing".
-        const rubricLabel = col.isRubricScored ? rubricLabelFor(valStr) : null;
+        const rubricLabel = col.isRubricScored
+          ? rubricLabelFor(valStr, subjectName === "AP Biology") : null;
 
         if (rubricLabel !== null) {
           displayValue = rubricLabel;
@@ -1622,7 +1662,7 @@ function generateHtmlTables(rows) {
 /**
  * Builds the HTML interface for student selection.
  */
-function buildStudentSelectorHtml(sections, mode, hasParentEmails) {
+function buildStudentSelectorHtml(sections, mode, hasParentEmails, skippedRows) {
   const template = HtmlService.createTemplate(`
     <style>
       body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 0; margin: 0; background: #fcfcfc; color: #3c4043; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
@@ -1734,6 +1774,14 @@ function buildStudentSelectorHtml(sections, mode, hasParentEmails) {
       .badge { display: inline-block; padding: 2px 6px; border-radius: 12px; font-size: 10px; font-weight: bold; margin-left: 8px; }
       .badge-warn { background: #fce8e6; color: #c5221f; }
 
+      /* Rows with an email that were not read as students */
+      .skipped-box {
+        margin-top: 12px; padding: 10px 12px; border-radius: 6px;
+        background: #fce8e6; border: 1px solid #f4c7c3; color: #a50e0e; font-size: 12px;
+      }
+      .skipped-box strong { display: block; margin-bottom: 4px; font-size: 13px; }
+      .skipped-box ul { margin: 4px 0 0 18px; padding: 0; }
+
       /* Footer / Buttons */
       .footer { 
         padding: 15px 20px; background: #fff; border-top: 1px solid #dadce0; 
@@ -1766,6 +1814,17 @@ function buildStudentSelectorHtml(sections, mode, hasParentEmails) {
     <div class="header">
       <h3>${mode === 'email' ? '📧 Email Student Reports' : '📂 Generate Drive Reports'}</h3>
       <div class="subtitle">Select students below to generate their progress reports.</div>
+
+      <? if (skippedRows.length > 0) { ?>
+        <div class="skipped-box">
+          <strong>⚠️ <?= skippedRows.length ?> row<?= skippedRows.length === 1 ? ' has' : 's have' ?> an email but <?= skippedRows.length === 1 ? 'is' : 'are' ?> not listed below</strong>
+          <ul>
+            <? for (var k = 0; k < skippedRows.length; k++) { ?>
+              <li><?= describeSkippedRow(skippedRows[k]) ?></li>
+            <? } ?>
+          </ul>
+        </div>
+      <? } ?>
       
       <? if (mode === 'email' && !hasParentEmails) { ?>
         <div class="dest-section">
@@ -1981,6 +2040,7 @@ function buildStudentSelectorHtml(sections, mode, hasParentEmails) {
   template.sections = sections;
   template.mode = mode;
   template.hasParentEmails = hasParentEmails;
+  template.skippedRows = skippedRows || [];
   return template.evaluate();
 }
 
@@ -2150,6 +2210,10 @@ function runSetupVerification() {
     } else {
       results.warnings.push(`No active students detected below Row ${headerRowNumber}. Ensure student names sit under a 'Name' header and that each student has an email or some graded work.`);
     }
+
+    roster.skipped.forEach(function (row) {
+      results.warnings.push(`${describeSkippedRow(row)}. This row has an email but will not appear in the Student Selector.`);
+    });
 
     if (results.sectionCount > 0) {
       results.successes.push(`Detected ${results.sectionCount} class sections: ${namedSections.join(', ')}.`);

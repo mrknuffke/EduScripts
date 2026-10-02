@@ -152,13 +152,14 @@ function compileTemplate(tmpl) {
     pos = m.index + m[0].length;
   }
   code += "__o += " + JSON.stringify(tmpl.slice(pos)) + ";\nreturn __o;";
-  return new Function('sections', 'mode', 'hasParentEmails', 'escapeHtml', code);
+  return new Function('sections', 'mode', 'hasParentEmails', 'skippedRows', 'escapeHtml', code);
 }
 
 /** Renders the selector dialog and returns its HTML. */
-function renderSelector(sections, mode, hasParentEmails) {
-  buildStudentSelectorHtml(sections, mode, hasParentEmails);
-  return compileTemplate(capturedTemplate)(sections, mode, hasParentEmails, escapeHtml);
+function renderSelector(sections, mode, hasParentEmails, skippedRows) {
+  skippedRows = skippedRows || [];
+  buildStudentSelectorHtml(sections, mode, hasParentEmails, skippedRows);
+  return compileTemplate(capturedTemplate)(sections, mode, hasParentEmails, skippedRows, escapeHtml);
 }
 
 /** Two sections, three students, one email mismatch, one missing address. */

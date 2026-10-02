@@ -27,6 +27,38 @@ check("AP Bio: headcount on banner did not create a student",
   a.roster.students.filter(function (s) { return s.name.indexOf("AP Bio") > -1; }).length, 0);
 check("AP Bio: Average/Sum rows dropped",
   a.roster.students.filter(function (s) { return s.name.indexOf("Average") > -1; }).length, 0);
+var maxSheet = sheetFrom([
+  ["", "Category:", "Admin", "", "Completion"],
+  ["", "Name:", "Preferred Name:", "Email:", "AC: Water Stations"],
+  ["", "", "", "", ""],
+  ["", "Jokela, Max", "Max", "jokela791289@sas.edu.sg", "1"],
+  ["", "Min", "", "", "1"],
+  ["", "Max", "", "", "1"],
+  ["", "Average/Sum:", "", "", "17"]
+], [8]);
+check("a student named Max is not a summary row",
+  scanGradebookRoster(maxSheet).students.map(function (s) { return s.name; }), ["Jokela, Max"]);
+var skipSheet = sheetFrom([
+  ["", "Category:", "Admin", "", "Completion"],
+  ["", "Name:", "Preferred Name:", "Email:", "AC: Water Stations"],
+  ["", "", "", "", ""],
+  ["", "Lee, Isaiah", "Isaiah", "lee781513@sas.edu.sg", "1"],
+  ["", "Jokela, Max", "Max", "jokela791289@sas.edu.sg", "1"],
+  ["", "", "", "orphan123@sas.edu.sg", "1"],
+  ["", "Average/Sum:", "", "", "17"]
+], [4]);
+var skipScan = scanGradebookRoster(skipSheet);
+check("banner-styled student row is excluded",
+  skipScan.students.map(function (s) { return s.name; }), ["Lee, Isaiah"]);
+check("excluded rows with an email are reported",
+  skipScan.skipped.map(function (s) { return s.row + 1; }), [5, 6]);
+check("banner reason explained", skipScan.skipped[0].reason.indexOf("banner") > -1, true);
+check("empty-name reason explained", skipScan.skipped[1].reason.indexOf("Name cell is empty") > -1, true);
+check("summary row without email is not reported",
+  skipScan.skipped.filter(function (s) { return s.name.indexOf("Average") > -1; }).length, 0);
+check("clean sheet reports nothing skipped", scanGradebookRoster(maxSheet).skipped.length, 0);
+check("describeSkippedRow uses 1-based rows",
+  describeSkippedRow(skipScan.skipped[0]), "Row 5 (Jokela, Max): it is formatted like a class banner (dark fill or white text)");
 check("AP Bio: split 3 / 3", a.groups.map(function (g) { return g.students.length; }), [3, 3]);
 check("AP Bio: emails captured", a.groups[0].students[0].email, "lee781513@sas.edu.sg");
 
@@ -109,6 +141,11 @@ check("parents present: parent line shown per student", (withParents.match(/Pare
 check("parents present: no forced default", withParents.indexOf('value="student" checked hidden'), -1);
 
 // Universally blank parent column: the choice disappears rather than misleading.
+check("no skipped-row warning when nothing skipped", withParents.indexOf("skipped-box\">") === -1, true);
+var withSkipped = renderSelector(DIALOG_SECTIONS, 'email', true,
+  [{ row: 33, name: "Jokela, Max", email: "jokela791289@sas.edu.sg", reason: "its Name cell is empty" }]);
+check("skipped-row warning shown", withSkipped.indexOf("1 row has an email but is not listed below") > -1, true);
+check("skipped row named with its sheet row", withSkipped.indexOf("Row 34 (Jokela, Max)") > -1, true);
 var noParents = renderSelector(DIALOG_SECTIONS, 'email', false);
 check("no parents: destination pills removed", (noParents.match(/class="dest-pill/g) || []).length, 0);
 check("no parents: Parent Only not offered", noParents.indexOf('Parent Only'), -1);
@@ -251,14 +288,26 @@ check("'Initial Appointment' is not an assessment",
   matchesAssessmentColumn("AC: Initial Appointment", "", ""), false);
 check("'Journal Submitted' is not an assessment",
   matchesAssessmentColumn("AC: Journal Submitted", "", ""), false);
+check("'Labs' category matches the lab keyword",
+  matchesAssessmentColumn("Lab: Ruler Drop", "", "Labs"), true);
+check("'Topic Questions' category matches the quest keyword",
+  matchesAssessmentColumn("Unit 1 TQ", "", "Topic Questions"), true);
+check("'Formatives' category matches the formative keyword",
+  matchesAssessmentColumn("1.5 Bonding", "", "Formatives"), true);
+check("'Unit Tests' category matches the test keyword",
+  matchesAssessmentColumn("Unit 2", "", "Unit Tests"), true);
+check("'Contest' header does not match the test keyword",
+  matchesAssessmentColumn("AC: Contest Entry", "", ""), false);
+check("'Pre-Lab' form does not match the lab keyword",
+  matchesAssessmentColumn("Form: Osmosis/Diffusion Pre-Lab", "", "Completion"), false);
 check("empty everything is not an assessment",
   matchesAssessmentColumn("", "", ""), false);
 check("null inputs tolerated",
   matchesAssessmentColumn(null, null, null), false);
 
-// Documented consequence: a header containing "test" now reports even when done.
-check("'Complete Pre-Test' header DOES match (see README note)",
-  matchesAssessmentColumn("AC: Complete Pre-Test", "", ""), true);
+// Hyphenated compounds are not the keyword: "Pre-Test" is not a test.
+check("'Complete Pre-Test' header does not match",
+  matchesAssessmentColumn("AC: Complete Pre-Test", "", ""), false);
 
 // =================== 0-4 rubric scoring =====================================
 out.push("\n== 10. Rubric scoring ==");
@@ -280,6 +329,12 @@ check("whitespace is not a zero", rubricLabelFor("   "), null);
 check("half marks pass through", rubricLabelFor("0.5"), null);
 check("3.5 passes through", rubricLabelFor("3.5"), null);
 check("5 is off the scale", rubricLabelFor("5"), null);
+check("lab 3.5 rounds down to Meeting", rubricLabelFor("3.5", true), "Meeting");
+check("lab 0.5 rounds down to Not Yet Evident", rubricLabelFor("0.5", true), "Not Yet Evident");
+check("lab .5 shorthand rounds down", rubricLabelFor(".5", true), "Not Yet Evident");
+check("lab 2.5 rounds down to Developing", rubricLabelFor("2.5", true), "Developing");
+check("lab 4.5 rounds down to Meeting with Distinction", rubricLabelFor("4.5", true), "Meeting with Distinction");
+check("lab 3.25 is not a half mark", rubricLabelFor("3.25", true), null);
 check("a percentage passes through", rubricLabelFor("95"), null);
 check("checkbox text passes through", rubricLabelFor("TRUE"), null);
 check("'m' passes through", rubricLabelFor("m"), null);
@@ -293,6 +348,9 @@ check("Chem formative by category", isRubricScoredColumn("Chemistry", "1.5 Bondi
 check("XL Chemistry included", isRubricScoredColumn("XL Chemistry", "Formative 1.1", "", "Formative 1.1", false), true);
 check("AP Bio lab by name", isRubricScoredColumn("AP Biology", "Lab 3", "", "Lab 3", false), true);
 check("AP Bio lab by category", isRubricScoredColumn("AP Biology", "Topic Quest 2", "Labs", "Topic Quest 2", false), true);
+check("AP Bio 'Lab: Ruler Drop'", isRubricScoredColumn("AP Biology", "Lab: Ruler Drop", "Labs", "Lab: Ruler Drop", false), true);
+check("AP Bio pre-lab form is not a rubric lab",
+  isRubricScoredColumn("AP Biology", "Form: Osmosis/Diffusion Pre-Lab", "Completion", "Form: Osmosis/Diffusion Pre-Lab", false), false);
 
 // Columns that must NOT be converted.
 check("Chem checkbox activity is not rubric",
