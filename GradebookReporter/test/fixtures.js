@@ -87,6 +87,28 @@ var CHEM_V2 = sheetFrom([
   ["Average:", "", "", "", "", "", "", ""]
 ], [4]);
 
+// --- 2c. Full Chem Sem 1 layout from production:
+//         - Completion Work with Row 3 standard chips + blank placeholder checkbox columns
+//         - Formatives with Row 3 standards
+//         - Summatives with merged headers spanning DCI, SEP, and CCC.1 standards
+var CHEM_FULL_DATA = [
+  // Row 1: Category headers
+  ["", "", "Admin", "Completion Work", "", "", "", "i's and m's", "Completion Percentage", "Formatives", "", "Summatives", "", "", "", ""],
+  // Row 2: Assignment headers (cols 5-6 are blank placeholder checkbox cols; cols 12-13 are continuation cols of merged HSPS1-1)
+  ["", "", "", "AC: Initial Appointment", "Lab: Chemical Reaction Survey", "", "", "", "", "Formative 1.1", "Formative 1.2", "HSPS1-1", "", "", "Project: Cultural Substance", ""],
+  // Row 3: Standards row (dropdown chips)
+  ["", "", "", "DCI.1 Structure & Properties", "SEP.2 Investigating & Analyzing", "", "", "", "", "DCI.1 Structure & Properties", "CCC.1 Patterns & Causality", "DCI.1 Structure & Properties", "SEP.1 Modeling", "CCC.1 Patterns & Causality", "DCI.1 Structure & Properties", "SEP.3 Explaining & Communicating"],
+  // Row 4: Roster headers
+  ["Name", "Preferred Name", "Email", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+  // Row 5: Section banner
+  ["A2/C4", "", "23", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+  // Row 6: Abigail Bong — 100% completion, all real assignments TRUE, placeholder cols FALSE
+  ["Bong, Abigail", "", "bong49520@sas.edu.sg", "TRUE", "TRUE", "FALSE", "FALSE", "0", "100", "4", "2", "4", "4", "4", "4", "4"],
+  // Row 7: Lance Diebley — incomplete Lab in Completion Work
+  ["Diebley, Lance", "", "diebley46523@sas.edu.sg", "TRUE", "i", "FALSE", "FALSE", "1", "93", "3", "3", "3", "3", "3", "3", "3"]
+];
+var CHEM_FULL = sheetFrom(CHEM_FULL_DATA, [4]);
+
 // --- 3. The demo gradebook this script generates: Section value per row.
 var DEMO = sheetFrom([
   ["", "", "", "", "Classwork", "Classwork", "Homework", "Assessments"],

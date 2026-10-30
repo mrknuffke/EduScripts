@@ -440,6 +440,40 @@ check("html: nothing for Chemistry",
 check("html: nothing when there are no labs",
   generateHtmlLabStandardNote([plainRow("ID: 1.2", "Complete")], "AP Biology", false), "");
 
+// Formative celebration status line + second celebration for all-MWD labs.
+check("celebration status: default when no labs below 4",
+  buildFormativeCelebrationStatus([labRow("Lab 1", 4, "Meeting with Distinction")], "AP Biology"),
+  "Status: No missing formative work. Nothing is owed at this time.");
+check("celebration status: singular note when 1 lab is below 4",
+  buildFormativeCelebrationStatus(
+    [labRow("Lab 1", 3, "Meeting"), labRow("Lab 2", 4, "Meeting with Distinction")], "AP Biology"
+  ).indexOf("1 lab on this report is not yet at Meeting with Distinction (4)") > -1, true);
+check("celebration status: plural note when multiple labs are below 4",
+  buildFormativeCelebrationStatus(
+    [labRow("Lab 1", 2, "Developing"), labRow("Lab 2", 3, "Meeting")], "AP Biology"
+  ).indexOf("2 labs on this report are not yet at Meeting with Distinction (4)") > -1, true);
+check("celebration status: Chemistry always uses default status",
+  buildFormativeCelebrationStatus([labRow("Formative 1.1", 2, "Developing")], "Chemistry"),
+  "Status: No missing formative work. Nothing is owed at this time.");
+
+check("second lab celebration: null when a lab is below 4",
+  buildLabCelebration([labRow("Lab 1", 4, "Meeting with Distinction"), labRow("Lab 2", 3, "Meeting")], "AP Biology"), null);
+check("second lab celebration: null when there are no labs",
+  buildLabCelebration([plainRow("ID: 1.2", "Complete")], "AP Biology"), null);
+check("second lab celebration: null for Chemistry",
+  buildLabCelebration([labRow("HSPS1-1", 4, "Meeting with Distinction")], "Chemistry"), null);
+var allMwdOne = buildLabCelebration([labRow("Lab 1", 4, "Meeting with Distinction")], "AP Biology");
+check("second lab celebration: singular subtitle for 1 lab at 4",
+  allMwdOne.subtitle, "Lab Mastery: Your lab on this report is at 4 (Meeting with Distinction)!");
+var allMwdTwo = buildLabCelebration(
+  [labRow("Lab 1", 4, "Meeting with Distinction"), labRow("Lab 2", 4, "Meeting with Distinction")], "AP Biology");
+check("second lab celebration: plural subtitle for multiple labs at 4",
+  allMwdTwo.subtitle, "Lab Mastery: All 2 labs on this report are at 4 (Meeting with Distinction)!");
+check("second lab celebration html: renders when all labs are 4",
+  generateHtmlLabCelebration([labRow("Lab 1", 4, "Meeting with Distinction")], "AP Biology").indexOf("Lab Mastery:") > -1, true);
+check("second lab celebration html: empty when not all labs are 4",
+  generateHtmlLabCelebration([labRow("Lab 1", 3, "Meeting")], "AP Biology"), "");
+
 // =================== outstanding-work rule ==================================
 out.push("\n== 12. Outstanding work ==");
 
@@ -456,22 +490,28 @@ function quizScore(v) {
            isRubricScored: false, isQuizOrWebAssign: true, isSummaryStat: false };
 }
 
-check("threshold is 3", AP_BIO_LAB_CONCERN_BELOW, 3);
+check("threshold is 1", AP_BIO_LAB_CONCERN_BELOW, 1);
 
-// The point of the change: Meeting is not outstanding work.
+// Scored labs (1-4) do not suppress the pun celebration; only 0 / Missing / Incomplete do.
 check("lab at 4 is not outstanding", hasOutstandingWork([lab(4)], "AP Biology"), false);
 check("lab at 3 (Meeting) is NOT outstanding", hasOutstandingWork([lab(3)], "AP Biology"), false);
-check("lab at 2 (Developing) IS outstanding", hasOutstandingWork([lab(2)], "AP Biology"), true);
-check("lab at 1 (Emerging) IS outstanding", hasOutstandingWork([lab(1)], "AP Biology"), true);
+check("lab at 2 (Developing) is NOT outstanding", hasOutstandingWork([lab(2)], "AP Biology"), false);
+check("lab at 1 (Emerging) is NOT outstanding", hasOutstandingWork([lab(1)], "AP Biology"), false);
 check("lab at 0 (Not Yet Evident) IS outstanding", hasOutstandingWork([lab(0)], "AP Biology"), true);
+check("lab marked Missing IS outstanding",
+  hasOutstandingWork([{ name: "Topic Quest Lab 1", value: "Missing", rawScore: null,
+                        isRubricScored: true, isQuizOrWebAssign: true, isSummaryStat: false }], "AP Biology"), true);
+check("lab marked Incomplete IS outstanding",
+  hasOutstandingWork([{ name: "Topic Quest Lab 1", value: "Incomplete", rawScore: null,
+                        isRubricScored: true, isQuizOrWebAssign: true, isSummaryStat: false }], "AP Biology"), true);
 
 // The rule must survive the assessment exclusion that used to kill it.
-check("a lab flagged as an assessment is still judged",
-  hasOutstandingWork([lab(1)], "AP Biology"), true);
-check("mixed report: one low lab is enough",
-  hasOutstandingWork([lab(4), lab(3), lab(1)], "AP Biology"), true);
-check("mixed report: all at 3 or above is clean",
-  hasOutstandingWork([lab(4), lab(3), lab(3)], "AP Biology"), false);
+check("a lab at 0 flagged as an assessment is still judged",
+  hasOutstandingWork([lab(0)], "AP Biology"), true);
+check("mixed report: one lab at 0 is enough",
+  hasOutstandingWork([lab(4), lab(2), lab(0)], "AP Biology"), true);
+check("mixed report: all labs at 1 or above is clean (pun shown)",
+  hasOutstandingWork([lab(4), lab(2), lab(1)], "AP Biology"), false);
 
 // An unscored lab makes no claim either way.
 check("lab with no score is not outstanding",
@@ -490,6 +530,91 @@ check("empty report is clean", hasOutstandingWork([], "AP Biology"), false);
 check("a Chem rubric score of 1 is not outstanding on its own",
   hasOutstandingWork([{ name: "Formative 1.1", value: "Emerging", rawScore: 1,
                         isRubricScored: true, isQuizOrWebAssign: true, isSummaryStat: false }], "Chemistry"), false);
+
+// =================== Chemistry report columns & rows ========================
+out.push("\n== 13. Chemistry column & row generation ==");
+
+var chemRosterCols = resolveRosterColumns(CHEM_FULL_DATA);
+var chemColDefs = buildColumnDefs(CHEM_FULL_DATA, null, null, "Chemistry", chemRosterCols.lastRosterCol);
+
+// 1. Blank placeholder columns under Completion Work have empty finalName and are skipped.
+check("blank placeholder cols under Completion Work get empty finalName",
+  [chemColDefs[5].finalName, chemColDefs[6].finalName], ["", ""]);
+
+// 2. Completion Work and Formatives keep just their assignment name (no Row 3 standard appended).
+check("Completion Work column does not append Row 3 standard",
+  chemColDefs[3].finalName, "AC: Initial Appointment");
+check("Completion Work lab column does not append Row 3 standard",
+  chemColDefs[4].finalName, "Lab: Chemical Reaction Survey");
+check("Formative column does not append Row 3 standard",
+  [chemColDefs[9].finalName, chemColDefs[10].finalName], ["Formative 1.1", "Formative 1.2"]);
+check("Formative with CCC.1 standard keeps Formatives category",
+  chemColDefs[10].finalCategory, "Formatives");
+
+// 3. Summative columns include 'Assessment, Standard' on ALL columns (including first column of merged header and CCC.1).
+check("Summative first column keeps its DCI standard",
+  chemColDefs[11].finalName, "HSPS1-1, DCI.1 Structure & Properties");
+check("Summative continuation column uses merged prefix + SEP standard",
+  chemColDefs[12].finalName, "HSPS1-1, SEP.1 Modeling");
+check("Summative CCC.1 column uses merged prefix + CCC.1 standard",
+  chemColDefs[13].finalName, "HSPS1-1, CCC.1 Patterns & Causality");
+check("Summative Project first column keeps its DCI standard",
+  chemColDefs[14].finalName, "Project: Cultural Substance, DCI.1 Structure & Properties");
+check("Summative Project second column keeps its SEP standard",
+  chemColDefs[15].finalName, "Project: Cultural Substance, SEP.3 Explaining & Communicating");
+
+// 4. All Summative columns share the single 'Summative Standard Mastery' category (CCC.1 is not split out).
+check("all Summative columns share 'Summative Standard Mastery' category",
+  chemColDefs.slice(11, 16).map(function (c) { return c.finalCategory; }),
+  ["Summative Standard Mastery", "Summative Standard Mastery", "Summative Standard Mastery",
+   "Summative Standard Mastery", "Summative Standard Mastery"]);
+
+// 5. Student row generation for Abigail Bong (100% completion, placeholder cols FALSE).
+var abigailRows = collectStudentReportRows(
+  CHEM_FULL_DATA[5], chemColDefs, "Chemistry", chemRosterCols.lastRosterCol, chemRosterCols.email);
+check("Abigail: no bogus 'Completion Work' missing rows from placeholder checkboxes",
+  abigailRows.filter(function (r) { return r.category === "Completion Work"; }).length, 0);
+check("Abigail: hasOutstandingWork is false (congratulations banner shown)",
+  hasOutstandingWork(abigailRows, "Chemistry"), false);
+check("Abigail: Completion Percentage stat is captured",
+  abigailRows.filter(function (r) { return r.isSummaryStat; }).map(function (r) { return r.name + "=" + r.value; }),
+  ["Completion Percentage=100"]);
+check("Abigail: Formatives reported with descriptors and badge colours",
+  abigailRows.filter(function (r) { return r.category === "Formatives"; }).map(function (r) {
+    return r.name + ":" + r.value + ":" + r.rowBg;
+  }),
+  ["Formative 1.1:Meeting with Distinction:#57df9d", "Formative 1.2:Developing:#f6b880"]);
+check("Abigail: all 5 Summative standards reported under Summative Standard Mastery with green badge",
+  abigailRows.filter(function (r) { return r.isSummativeStandard; }).map(function (r) {
+    return r.category + "|" + r.name + "|" + r.value + "|" + r.bgColor + "|" + r.rowBg + "|" + r.rowFont;
+  }),
+  [
+    "Summative Standard Mastery|HSPS1-1, DCI.1 Structure & Properties|Meeting with Distinction|#ffffff|#57df9d|#000000",
+    "Summative Standard Mastery|HSPS1-1, SEP.1 Modeling|Meeting with Distinction|#ffffff|#57df9d|#000000",
+    "Summative Standard Mastery|HSPS1-1, CCC.1 Patterns & Causality|Meeting with Distinction|#ffffff|#57df9d|#000000",
+    "Summative Standard Mastery|Project: Cultural Substance, DCI.1 Structure & Properties|Meeting with Distinction|#ffffff|#57df9d|#000000",
+    "Summative Standard Mastery|Project: Cultural Substance, SEP.3 Explaining & Communicating|Meeting with Distinction|#ffffff|#57df9d|#000000"
+  ]);
+
+// 6. Student row generation for Lance Diebley (incomplete lab in Completion Work).
+var lanceRows = collectStudentReportRows(
+  CHEM_FULL_DATA[6], chemColDefs, "Chemistry", chemRosterCols.lastRosterCol, chemRosterCols.email);
+check("Lance: only the actual incomplete item is reported in Completion Work (without Row 3 standard)",
+  lanceRows.filter(function (r) { return r.category === "Completion Work"; }).map(function (r) {
+    return r.name + ":" + r.value;
+  }),
+  ["Lab: Chemical Reaction Survey:Incomplete"]);
+check("Lance: hasOutstandingWork is true because of the incomplete lab",
+  hasOutstandingWork(lanceRows, "Chemistry"), true);
+
+// 7. Rubric badge style helper covers 0-4 and half-mark rounding.
+check("rubricScoreStyle 4 is green", rubricScoreStyle("4"), { bg: "#57df9d", font: "#000000" });
+check("rubricScoreStyle 3 is yellow", rubricScoreStyle("3"), { bg: "#ffdc79", font: "#000000" });
+check("rubricScoreStyle 2 is orange", rubricScoreStyle("2"), { bg: "#f6b880", font: "#000000" });
+check("rubricScoreStyle 1 is light red", rubricScoreStyle("1"), { bg: "#f4cccc", font: "#000000" });
+check("rubricScoreStyle 0 is red", rubricScoreStyle("0"), { bg: "#e06666", font: "#000000" });
+check("rubricScoreStyle 3.5 rounds down when enabled", rubricScoreStyle("3.5", true), { bg: "#ffdc79", font: "#000000" });
+check("rubricScoreStyle blank is null", rubricScoreStyle(""), null);
 
 out.push("\n" + (failures === 0 ? "ALL " + (out.filter(function (l) { return l.indexOf("  PASS") === 0; }).length) + " CHECKS PASSED"
                                 : failures + " CHECK(S) FAILED"));

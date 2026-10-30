@@ -29,19 +29,6 @@
  * 3. Process.
  */
 
-/**
- * Expands shorthand prefixes in assignment names for display.
- * @param {string} name - The assignment name to expand
- * @return {string} The expanded name
- */
-function expandAssignmentPrefix(name) {
-  if (!name) return name;
-  // Case-insensitive prefix expansion
-  return name
-    .replace(/^AC:/i, 'Activity:')
-    .replace(/^ID:/i, 'InfoDoc:');
-}
-
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Gradebook Tools')
@@ -138,6 +125,19 @@ function generateGradebookTemplate() {
 }
 
 // --- ROSTER SCANNING (shared by the Student Selector and the Setup Checker) ---
+
+/**
+ * Expands shorthand prefixes in assignment names for display.
+ * @param {string} name - The assignment name to expand
+ * @return {string} The expanded name
+ */
+function expandAssignmentPrefix(name) {
+  if (!name) return name;
+  // Case-insensitive prefix expansion
+  return name
+    .replace(/^AC:/i, 'Activity:')
+    .replace(/^ID:/i, 'InfoDoc:');
+}
 
 /** Words that mark a row as a class/section divider rather than a person. */
 const SECTION_LABEL_WORDS = /\b(block|period|section|class|hour|homeroom|semester|quarter|term|group)\b/i;
@@ -397,6 +397,15 @@ const RUBRIC_LABELS = {
   '4': 'Meeting with Distinction'
 };
 
+/** Badge colours for the 0-4 rubric (matches the Formative conditional formatting). */
+const RUBRIC_STYLES = {
+  '0': { bg: '#e06666', font: '#000000' },
+  '1': { bg: '#f4cccc', font: '#000000' },
+  '2': { bg: '#f6b880', font: '#000000' },
+  '3': { bg: '#ffdc79', font: '#000000' },
+  '4': { bg: '#57df9d', font: '#000000' }
+};
+
 /**
  * Converts a 0-4 rubric score into its descriptor.
  *
@@ -420,26 +429,46 @@ function rubricLabelFor(value, roundHalvesDown) {
 }
 
 /**
+ * Returns the badge background and text colours for a 0-4 rubric score, or
+ * null when the value is off the 0-4 scale.
+ */
+function rubricScoreStyle(value, roundHalvesDown) {
+  const raw = String(value === null || value === undefined ? "" : value).trim();
+  if (raw === "") return null;
+
+  let num = Number(raw);
+  if (!isFinite(num)) return null;
+  if (roundHalvesDown && num % 1 === 0.5) num = Math.floor(num);
+
+  const key = String(num);
+  return Object.prototype.hasOwnProperty.call(RUBRIC_STYLES, key) ? RUBRIC_STYLES[key] : null;
+}
+
+/**
  * An AP Biology lab below this rubric score counts as outstanding work.
  *
- * 3 (Meeting) is a legitimate stop on the way to 4, not a problem: the lab
- * standard note carries the "get to 4 by the end of the semester" message, so
- * only work below Meeting is flagged as outstanding.
+ * Scored labs at 1–3 (Emerging, Developing, Meeting) are in-progress work
+ * covered by the "What lab scores need to reach" note at the bottom of the
+ * report, so they do not suppress the silly pun celebration for students who
+ * have all their formative work in. Only 0 (Not Yet Evident) or Missing /
+ * Incomplete flags a lab as outstanding.
  */
-const AP_BIO_LAB_CONCERN_BELOW = 3;
+const AP_BIO_LAB_CONCERN_BELOW = 1;
 
 /**
  * Decides whether a report shows outstanding work, which suppresses the
  * congratulations message and drives the encouragement tiers.
  *
- * AP Biology labs are judged on their rubric score rather than on a Missing or
- * Incomplete marker, and are checked before the assessment exclusion below.
- * They are classified as assessments, so folding them in with everything else
- * would silently exclude them and leave the rule unable to fire at all.
+ * Explicit Missing or Incomplete markers always count. AP Biology labs with a
+ * numeric rubric score only count as outstanding when below
+ * AP_BIO_LAB_CONCERN_BELOW (i.e. 0 / Not Yet Evident); labs scored 1–4 are
+ * addressed by the lab standard note instead.
  */
 function hasOutstandingWork(reportRows, subjectName) {
   return reportRows.some(function (item) {
     if (item.isSummaryStat) return false;
+
+    if (item.value === 'Missing' || item.value === 'Incomplete') return true;
 
     if (subjectName === "AP Biology" && item.isRubricScored) {
       return item.rawScore !== null && item.rawScore !== undefined &&
@@ -449,7 +478,7 @@ function hasOutstandingWork(reportRows, subjectName) {
     // Scored assessments are reported for information, not as work owed.
     if (item.isQuizOrWebAssign) return false;
 
-    return item.value === 'Missing' || item.value === 'Incomplete';
+    return false;
   });
 }
 
@@ -502,6 +531,256 @@ function resolveCategoryRow(categoryRow, lastRosterCol) {
     }
   }
   return categories;
+}
+
+/**
+ * Builds per-column definitions from the gradebook header rows (Rows 1-3).
+ *
+ * - Propagates category headers across merged spans while ignoring roster labels.
+ * - Leaves unnamed placeholder columns with finalName === "" so they are skipped,
+ *   rather than falling back to the propagated category name (which turned
+ *   empty checkbox columns under "Completion Work" into missing assignments).
+ * - In Chemistry / XL Chemistry, combines the assessment header and Row 3
+ *   standard ("HSPS1-1, DCI.1...") ONLY for Summative columns, leaving
+ *   Completion Work and Formatives with just their Row 2 assignment name.
+ * - Groups all Summative Standard columns under "Summative Standard Mastery"
+ *   and recognises CCC.* alongside DCI.*, SEP.*, AC.* as Chemistry standards
+ *   so they are never split into separate category tables.
+ */
+function buildColumnDefs(data, backgrounds, fontColors, subjectName, lastRosterCol) {
+  const categoryRowIndex = 0;
+  const headerRowIndex = 1;
+  const standardsRowIndex = 2;
+
+  const isChemistry = (subjectName === "Chemistry" || subjectName === "XL Chemistry");
+  let summativeStartColIndex = -1;
+  if (isChemistry) {
+    for (let r = 0; r < Math.min(data.length, 10); r++) {
+      const rowVals = data[r] || [];
+      const foundIdx = rowVals.findIndex(function (cell) {
+        return cell && String(cell).toLowerCase().trim() === 'summatives';
+      });
+      if (foundIdx !== -1) { summativeStartColIndex = foundIdx; break; }
+    }
+  }
+
+  const headers = data[headerRowIndex] || [];
+  const rawCategoryRow = data[categoryRowIndex] || [];
+  const categories = resolveCategoryRow(rawCategoryRow, lastRosterCol);
+  const standards = (data.length > standardsRowIndex) ? data[standardsRowIndex] : [];
+  const headerBgColors = (backgrounds && backgrounds[headerRowIndex]) ? backgrounds[headerRowIndex] : [];
+  const headerFontColors = (fontColors && fontColors[headerRowIndex]) ? fontColors[headerRowIndex] : [];
+
+  let cutoffColIndex = headers.length;
+  for (let i = lastRosterCol + 1; i < headers.length; i++) {
+    if (headerBgColors[i] === '#000000') { cutoffColIndex = i; break; }
+  }
+
+  const columnDefs = headers.map(function (header, i) {
+    if (i >= cutoffColIndex) return null;
+    return {
+      id: i,
+      rawHeader: header,
+      standard: (standards && standards[i]) ? standards[i] : null,
+      rawCategory: (categories && categories[i]) ? categories[i] : null,
+      ownCategoryCell: (rawCategoryRow && rawCategoryRow[i]) ? String(rawCategoryRow[i]).trim() : "",
+      bgColor: headerBgColors[i] || '#ffffff',
+      fontColor: headerFontColors[i] || '#000000',
+      finalName: header,
+      finalCategory: "",
+      isSummativeStandard: false,
+      isQuizOrWebAssign: false,
+      isSummaryStat: false
+    };
+  });
+
+  // Left empty so the table renderers fall back to their neutral "General"
+  // heading; an assignment column with no category above it had been picking
+  // up whatever label happened to sit to its left.
+  let lastCategory = "";
+  columnDefs.forEach(function (col) {
+    if (!col || col.id <= lastRosterCol) return;
+    if (col.rawCategory && col.rawCategory.trim() !== "") lastCategory = col.rawCategory.trim();
+    col.finalCategory = lastCategory;
+  });
+
+  const headerScoreKeywords = ['raw', 'score', 'percent', '%', 'letter', 'grade', 'points', 'pts'];
+  const summaryKeywords = ['completion', 'missing', 'participation', 'rate'];
+
+  let lastSeenHeader = "";
+  columnDefs.forEach(function (col) {
+    if (!col || col.id <= lastRosterCol) return;
+    const currentHeader = col.rawHeader ? String(col.rawHeader).trim() : "";
+    if (currentHeader !== "" && isChemistry) lastSeenHeader = currentHeader;
+
+    const isStandardCol = Boolean(
+      col.standard &&
+      String(col.standard).trim() !== "" &&
+      !String(col.standard).toLowerCase().includes("standards") &&
+      !String(col.standard).toLowerCase().includes("admin")
+    );
+
+    const catLower = col.finalCategory ? col.finalCategory.toLowerCase().trim() : "";
+    const prefix = (currentHeader !== "") ? currentHeader : lastSeenHeader;
+    const isSummativeCol = isChemistry && (
+      catLower.includes("summative") ||
+      prefix.toLowerCase().includes("summative") ||
+      (summativeStartColIndex !== -1 && col.id >= summativeStartColIndex)
+    );
+
+    // A standalone summary metric (e.g. "Completion Percentage") is sometimes
+    // placed in Row 1 with Row 2 left blank. Allow that specific column to use
+    // its own Row 1 cell as its name, without ever falling back to a propagated
+    // category header like "Completion Work".
+    const ownCatLower = col.ownCategoryCell.toLowerCase();
+    const isOwnSummaryCell = currentHeader === "" && col.ownCategoryCell !== "" &&
+      !ownCatLower.includes("work") &&
+      summaryKeywords.some(function (k) { return ownCatLower.includes(k); });
+
+    if (isSummativeCol && isStandardCol) {
+      const stdText = String(col.standard).trim();
+      col.finalName = prefix ? `${prefix}, ${stdText}` : stdText;
+      col.isSummativeStandard = true;
+      col.finalCategory = "Summative Standard Mastery";
+    } else if (isSummativeCol && currentHeader !== "" && !isOwnSummaryCell) {
+      col.finalName = currentHeader;
+      col.isSummativeStandard = true;
+      col.finalCategory = "Summative Standard Mastery";
+    } else if (isOwnSummaryCell) {
+      col.finalName = col.ownCategoryCell;
+    } else {
+      col.finalName = currentHeader;
+    }
+
+    // --- FLEXIBLE GROUPED ASSESSMENT & SUMMARY DETECTION ---
+    const lowerHeader = currentHeader.toLowerCase();
+    const lowerStandard = col.standard ? String(col.standard).toLowerCase().trim() : "";
+
+    const matchesAssessment = matchesAssessmentColumn(col.rawHeader, col.standard, col.finalCategory);
+    const matchesScoreHeader = headerScoreKeywords.some(function (k) { return lowerHeader.includes(k); });
+
+    // Logic: It's a grouped assessment if Row 3 OR Category has a keyword OR (Row 3 exists/is used AND Row 2 looks like a score header)
+    if (matchesAssessment || (lowerStandard !== "" && matchesScoreHeader)) {
+      col.isQuizOrWebAssign = true;
+      // If a specific name exists in the Standards row (row 3), preserve it as the category for grouping
+      // BUT ONLY if it isn't a Summative Standard and doesn't look like a Chemistry Standard ID (DCI, SEP, AC, CCC, HSPS)
+      if (!col.isSummativeStandard && col.standard && String(col.standard).trim() !== "") {
+        const std = String(col.standard).trim();
+        const isChemStandard = /^(DCI|SEP|AC|CCC?|HSPS)/i.test(std);
+        if (!isChemStandard) col.finalCategory = std;
+      }
+      if (!col.isSummativeStandard && currentHeader !== "") col.finalName = currentHeader;
+    }
+
+    // Checking for Summary Stats
+    if ((lowerHeader !== "" && summaryKeywords.some(function (k) { return lowerHeader.includes(k); })) || isOwnSummaryCell) {
+      col.isSummaryStat = true;
+    }
+
+    col.isRubricScored = !col.isSummaryStat && isRubricScoredColumn(
+      subjectName, col.rawHeader, col.finalCategory, col.finalName, col.isSummativeStandard);
+  });
+
+  return columnDefs;
+}
+
+/**
+ * Builds the reportable assignment/assessment/stat rows for one student row.
+ */
+function collectStudentReportRows(row, columnDefs, subjectName, lastRosterCol, emailColIndex, rowNotes, rowBgColors, rowFontColors) {
+  const notesArr = rowNotes || [];
+  const bgArr = rowBgColors || [];
+  const fontArr = rowFontColors || [];
+  const isChemistry = (subjectName === "Chemistry" || subjectName === "XL Chemistry");
+  const reportRows = [];
+
+  columnDefs.forEach(function (col, idx) {
+    if (!col || idx <= lastRosterCol || col.rawHeader === 'Assignment' || col.rawHeader === 'Preferred Name') return;
+
+    const rawLower = col.rawHeader ? String(col.rawHeader).toLowerCase() : "";
+    const finalLower = col.finalName ? String(col.finalName).toLowerCase() : "";
+    if (rawLower.includes("excused") || rawLower.includes("i's and m's") ||
+        finalLower.includes("excused") || finalLower.includes("i's and m's") ||
+        idx === emailColIndex) return;
+    if (!col.finalName && !col.standard) return;
+
+    const value = row[idx];
+    let displayValue = value;
+    let isIssue = false;
+    let isExempt = false;
+    let rawScore = null;
+
+    if (value) {
+      const valStr = String(value).trim();
+      const lowerVal = valStr.toLowerCase();
+      const rawHeaderLower = col.rawHeader ? String(col.rawHeader).toLowerCase() : "";
+
+      // A rubric score must be read before the complete/missing mapping,
+      // which would otherwise turn 1 into "Complete" and 0 into "Missing".
+      const rubricLabel = col.isRubricScored
+        ? rubricLabelFor(valStr, subjectName === "AP Biology") : null;
+
+      if (rubricLabel !== null) {
+        displayValue = rubricLabel;
+        rawScore = Number(valStr);
+        if (rawScore === 0) isIssue = true;      // no evidence of the standard yet
+      }
+      else if ((lowerVal === 'true' || valStr === '1') && !col.isSummaryStat) displayValue = 'Complete';
+      else if ((valStr === '0' || lowerVal === 'm' || lowerVal === 'false') && !col.isSummaryStat) { displayValue = 'Missing'; isIssue = true; }
+      else if (lowerVal === 'ex') { displayValue = 'Exempt'; isExempt = true; }
+      else if (lowerVal === 'i') { displayValue = 'Incomplete'; isIssue = true; }
+      // Treat 0.5 or .5 as Incomplete for Activities (AC:) and InfoDocs (ID:)
+      else if ((valStr === '0.5' || valStr === '.5') && !col.isSummaryStat) {
+        const isActivityOrInfoDoc = rawHeaderLower.startsWith('ac:') || rawHeaderLower.startsWith('id:');
+        if (isActivityOrInfoDoc) { displayValue = 'Incomplete'; isIssue = true; }
+      }
+
+      // Uses the rubric flag rather than a name prefix: a lab headed
+      // "Topic Quest Lab 1" does not start with "lab" and was never matched.
+      if (subjectName === "AP Biology" && col.isRubricScored) {
+        const numVal = parseFloat(valStr);
+        if (!isNaN(numVal) && numVal < AP_BIO_LAB_CONCERN_BELOW) isIssue = true;
+      }
+    } else {
+      displayValue = "-";
+    }
+
+    let shouldReport = false;
+    if (isIssue || isExempt) shouldReport = true;
+    if (isChemistry && col.isSummativeStandard && displayValue !== "-" && String(displayValue).trim() !== "") shouldReport = true;
+    if (col.isQuizOrWebAssign && displayValue !== "-" && String(displayValue).trim() !== "") shouldReport = true;
+    if (col.isSummaryStat) shouldReport = true;
+
+    // A column with no header and no category has nothing to show a student.
+    if (!col.finalName || String(col.finalName).trim() === "") shouldReport = false;
+
+    if (shouldReport) {
+      const rubricStyle = (col.isRubricScored && rawScore !== null)
+        ? rubricScoreStyle(rawScore, subjectName === "AP Biology") : null;
+      const itemBgColor = (col.isRubricScored || col.isSummativeStandard) ? '#ffffff' : (col.bgColor || '#ffffff');
+      const itemFontColor = (col.isRubricScored || col.isSummativeStandard) ? '#000000' : (col.fontColor || '#000000');
+      const itemRowBg = rubricStyle ? rubricStyle.bg : (bgArr[idx] || '#ffffff');
+      const itemRowFont = rubricStyle ? rubricStyle.font : (fontArr[idx] || '#000000');
+
+      reportRows.push({
+        category: col.finalCategory,
+        name: expandAssignmentPrefix(col.finalName),
+        value: displayValue,
+        rawScore: rawScore,
+        isRubricScored: !!col.isRubricScored,
+        note: notesArr[idx] || "",
+        bgColor: itemBgColor,
+        fontColor: itemFontColor,
+        rowBg: itemRowBg,
+        rowFont: itemRowFont,
+        isQuizOrWebAssign: col.isQuizOrWebAssign,
+        isSummaryStat: col.isSummaryStat,
+        isSummativeStandard: col.isSummativeStandard
+      });
+    }
+  });
+
+  return reportRows;
 }
 
 /**
@@ -806,15 +1085,6 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
     "Control group? More like you're IN control! 🎮", "You've got the right formula for success! 📝"
   ];
 
-  let summativeStartColIndex = -1;
-  if (subjectName === "Chemistry") {
-    for (let r = 0; r < Math.min(data.length, 10); r++) {
-      const rowVals = data[r];
-      const foundIdx = rowVals.findIndex(cell => cell && String(cell).toLowerCase().trim() === 'summatives');
-      if (foundIdx !== -1) { summativeStartColIndex = foundIdx; break; }
-    }
-  }
-
   const headers = data[headerRowIndex];
   // Fill-right Categories for merged headers, ignoring any label that belongs
   // to the roster block rather than to the assignments.
@@ -873,95 +1143,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
     }
   }
 
-  let cutoffColIndex = headers.length;
-  const headerBgColors = backgrounds[headerRowIndex];
-  for (let i = lastRosterCol + 1; i < headers.length; i++) {
-    if (headerBgColors[i] === '#000000') { cutoffColIndex = i; break; }
-  }
-
-  const standards = (data.length > standardsRowIndex) ? data[standardsRowIndex] : [];
-  const headerFontColors = fontColors[headerRowIndex];
-
-  const columnDefs = headers.map((header, i) => {
-    if (i >= cutoffColIndex) return null;
-    return {
-      id: i,
-      rawHeader: header,
-      standard: (standards && standards[i]) ? standards[i] : null,
-      rawCategory: (categories && categories[i]) ? categories[i] : null,
-      bgColor: headerBgColors[i],
-      fontColor: headerFontColors[i],
-      finalName: header,
-      finalCategory: "",
-      isSummativeStandard: false,
-      isQuizOrWebAssign: false,
-      isSummaryStat: false
-    };
-  });
-
-  // Left empty so the table renderers fall back to their neutral "General"
-  // heading; an assignment column with no category above it had been picking
-  // up whatever label happened to sit to its left.
-  let lastCategory = "";
-  columnDefs.forEach(col => {
-    if (!col || col.id <= lastRosterCol) return;
-    if (col.rawCategory && col.rawCategory.trim() !== "") lastCategory = col.rawCategory.trim();
-    col.finalCategory = lastCategory;
-  });
-
-  let lastSeenHeader = "";
-  columnDefs.forEach(col => {
-    if (!col || col.id <= lastRosterCol) return;
-    let currentHeader = col.rawHeader ? col.rawHeader.trim() : "";
-    if (currentHeader !== "" && subjectName === "Chemistry") lastSeenHeader = currentHeader;
-
-    const isStandardCol = col.standard && col.standard.trim() !== "" && !col.standard.toLowerCase().includes("standards") && !col.standard.toLowerCase().includes("admin");
-
-    if (subjectName === "Chemistry" && isStandardCol) {
-      const prefix = (currentHeader !== "") ? currentHeader : lastSeenHeader;
-      col.finalName = `${prefix}, ${col.standard}`;
-      if (prefix.toLowerCase().includes("summative") || (summativeStartColIndex !== -1 && col.id >= summativeStartColIndex)) {
-        col.isSummativeStandard = true;
-      }
-    } else if (currentHeader === "" && col.finalCategory && col.finalCategory.trim() !== "") {
-      col.finalName = col.finalCategory;
-    } else {
-      col.finalName = currentHeader;
-    }
-
-    // --- NEW: FLEXIBLE GROUPED ASSESSMENT & SUMMARY DETECTION ---
-    const lowerHeader = col.rawHeader ? col.rawHeader.toLowerCase().trim() : "";
-    const lowerStandard = col.standard ? col.standard.toLowerCase().trim() : "";
-    const lowerCategory = col.finalCategory ? col.finalCategory.toLowerCase().trim() : "";
-
-    // Heuristics
-    const headerScoreKeywords = ['raw', 'score', 'percent', '%', 'letter', 'grade', 'points', 'pts'];
-    const summaryKeywords = ['completion', 'missing', 'participation', 'rate'];
-
-    const matchesAssessment = matchesAssessmentColumn(col.rawHeader, col.standard, col.finalCategory);
-    const matchesScoreHeader = headerScoreKeywords.some(k => lowerHeader.includes(k));
-
-    // Logic: It's a grouped assessment if Row 3 OR Category has a keyword OR (Row 3 exists/is used AND Row 2 looks like a score header)
-    if (matchesAssessment || (lowerStandard !== "" && matchesScoreHeader)) {
-      col.isQuizOrWebAssign = true;
-      // If a specific name exists in the Standards row (row 3), preserve it as the category for grouping
-      // BUT ONLY if it isn't empty and doesn't look like a Chemistry Standard ID (DCI, SEP, AC, etc)
-      if (col.standard && col.standard.trim() !== "") {
-        const std = col.standard.trim();
-        const isChemStandard = /^(DCI|SEP|AC|CC)\./i.test(std);
-        if (!isChemStandard) col.finalCategory = std;
-      }
-      if (currentHeader !== "") col.finalName = currentHeader;
-    }
-
-    // Checking for Summary Stats
-    if (summaryKeywords.some(k => lowerHeader.includes(k))) {
-      col.isSummaryStat = true;
-    }
-
-    col.isRubricScored = !col.isSummaryStat && isRubricScoredColumn(
-      subjectName, col.rawHeader, col.finalCategory, col.finalName, col.isSummativeStandard);
-  });
+  const columnDefs = buildColumnDefs(data, backgrounds, fontColors, subjectName, lastRosterCol);
 
   // --- PREPARE OUTPUT ---
   let doc, docId, docBody;
@@ -970,7 +1152,7 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
   let processedCount = 0;
 
   if (mode === 'drive') {
-    const docName = `${sheetName} - Selected Reports`;
+    const docName = `${sheet.getName()} - Selected Reports`;
     doc = DocumentApp.create(docName);
     docId = doc.getId();
     docBody = doc.getBody();
@@ -986,84 +1168,8 @@ function processGradebook(sheet, titlePrefix, subjectName, mode, targetRows, ema
     const rowBgColors = backgrounds[r];
     const rowFontColors = fontColors[r];
 
-    // Gather Data
-    let reportRows = [];
-    columnDefs.forEach((col, idx) => {
-      if (!col || idx <= lastRosterCol || col.rawHeader === 'Assignment' || col.rawHeader === 'Preferred Name') return;
-
-      const rawLower = col.rawHeader ? col.rawHeader.toLowerCase() : "";
-      const finalLower = col.finalName ? col.finalName.toLowerCase() : "";
-      if (rawLower.includes("excused") || rawLower.includes("i's and m's") || finalLower.includes("excused") || finalLower.includes("i's and m's") || idx === emailColIndex) return;
-      if (!col.finalName && !col.standard) return;
-
-      let value = row[idx];
-      let displayValue = value;
-      let isIssue = false;
-      let isExempt = false;
-      let rawScore = null;
-
-      if (value) {
-        const valStr = String(value).trim();
-        const lowerVal = valStr.toLowerCase();
-        const rawHeaderLower = col.rawHeader ? col.rawHeader.toLowerCase() : "";
-
-        // A rubric score must be read before the complete/missing mapping,
-        // which would otherwise turn 1 into "Complete" and 0 into "Missing".
-        const rubricLabel = col.isRubricScored
-          ? rubricLabelFor(valStr, subjectName === "AP Biology") : null;
-
-        if (rubricLabel !== null) {
-          displayValue = rubricLabel;
-          rawScore = Number(valStr);
-          if (rawScore === 0) isIssue = true;      // no evidence of the standard yet
-        }
-        else if ((lowerVal === 'true' || valStr === '1') && !col.isSummaryStat) displayValue = 'Complete';
-        else if ((valStr === '0' || lowerVal === 'm' || lowerVal === 'false') && !col.isSummaryStat) { displayValue = 'Missing'; isIssue = true; }
-        else if (lowerVal === 'ex') { displayValue = 'Exempt'; isExempt = true; }
-        else if (lowerVal === 'i') { displayValue = 'Incomplete'; isIssue = true; }
-        // Treat 0.5 or .5 as Incomplete for Activities (AC:) and InfoDocs (ID:)
-        else if ((valStr === '0.5' || valStr === '.5') && !col.isSummaryStat) {
-          const isActivityOrInfoDoc = rawHeaderLower.startsWith('ac:') || rawHeaderLower.startsWith('id:');
-          if (isActivityOrInfoDoc) { displayValue = 'Incomplete'; isIssue = true; }
-        }
-
-        // Uses the rubric flag rather than a name prefix: a lab headed
-        // "Topic Quest Lab 1" does not start with "lab" and was never matched.
-        if (subjectName === "AP Biology" && col.isRubricScored) {
-          const numVal = parseFloat(valStr);
-          if (!isNaN(numVal) && numVal < AP_BIO_LAB_CONCERN_BELOW) isIssue = true;
-        }
-      } else {
-        displayValue = "-";
-      }
-
-      let shouldReport = false;
-      if (isIssue || isExempt) shouldReport = true;
-      if (subjectName === "Chemistry" && col.isSummativeStandard) shouldReport = true;
-      if (col.isQuizOrWebAssign && displayValue !== "-" && String(displayValue).trim() !== "") shouldReport = true;
-      if (col.isSummaryStat) shouldReport = true;
-
-      // A column with no header and no category has nothing to show a student.
-      if (!col.finalName || String(col.finalName).trim() === "") shouldReport = false;
-
-      if (shouldReport) {
-        reportRows.push({
-          category: col.finalCategory,
-          name: expandAssignmentPrefix(col.finalName),
-          value: displayValue,
-          rawScore: rawScore,
-          isRubricScored: !!col.isRubricScored,
-          note: rowNotes[idx],
-          bgColor: col.bgColor,
-          fontColor: col.fontColor,
-          rowBg: rowBgColors[idx],
-          rowFont: rowFontColors[idx],
-          isQuizOrWebAssign: col.isQuizOrWebAssign,
-          isSummaryStat: col.isSummaryStat,
-          isSummativeStandard: col.isSummativeStandard
-        });
-      }
-    });
+    const reportRows = collectStudentReportRows(
+      row, columnDefs, subjectName, lastRosterCol, emailColIndex, rowNotes, rowBgColors, rowFontColors);
 
     const hasActualMissingWork = hasOutstandingWork(reportRows, subjectName);
 
@@ -1189,8 +1295,9 @@ function renderToDoc(body, title, studentName, rows, hasMissing, subjectName, me
     const msg = messages[Math.floor(Math.random() * messages.length)];
     const pMsg = body.appendParagraph(`\n\n${msg}`);
     pMsg.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setFontSize(14).setForegroundColor('#2E7D32');
-    const pSub = body.appendParagraph("\nStatus: No missing formative work. Nothing is owed at this time.");
+    const pSub = body.appendParagraph(`\n${buildFormativeCelebrationStatus(rows, subjectName)}`);
     pSub.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setFontSize(10).setForegroundColor('#555555');
+    printLabCelebrationDoc(body, rows, subjectName);
 
     // Stats for perfect students
     printSummaryStatsDoc(body, rows);
@@ -1199,15 +1306,12 @@ function renderToDoc(body, title, studentName, rows, hasMissing, subjectName, me
     if (rows.length > 0) {
       const filteredRows = rows.filter(r => !r.isSummaryStat);
 
-      if (subjectName === "Chemistry") {
+      if (subjectName === "Chemistry" || subjectName === "XL Chemistry") {
         const summativeRows = filteredRows.filter(r => r.isSummativeStandard);
         const otherRows = filteredRows.filter(r => !r.isSummativeStandard);
 
         if (otherRows.length > 0) printGroupedTableDoc(body, otherRows);
-        if (summativeRows.length > 0) {
-          body.appendParagraph("\nSummative Standard Mastery:\n").setBold(true).setFontSize(12);
-          printGroupedTableDoc(body, summativeRows);
-        }
+        if (summativeRows.length > 0) printGroupedTableDoc(body, summativeRows);
       } else {
         if (filteredRows.length > 0) printGroupedTableDoc(body, filteredRows);
       }
@@ -1216,15 +1320,12 @@ function renderToDoc(body, title, studentName, rows, hasMissing, subjectName, me
   } else {
     // Has Missing Work
     const filteredRows = rows.filter(r => !r.isSummaryStat);
-    if (subjectName === "Chemistry") {
+    if (subjectName === "Chemistry" || subjectName === "XL Chemistry") {
       const summativeRows = filteredRows.filter(r => r.isSummativeStandard);
       const otherRows = filteredRows.filter(r => !r.isSummativeStandard);
 
       if (otherRows.length > 0) printGroupedTableDoc(body, otherRows);
-      if (summativeRows.length > 0) {
-        body.appendParagraph("\nSummative Standard Mastery:\n").setBold(true).setFontSize(12);
-        printGroupedTableDoc(body, summativeRows);
-      }
+      if (summativeRows.length > 0) printGroupedTableDoc(body, summativeRows);
     } else {
       printGroupedTableDoc(body, filteredRows);
     }
@@ -1317,9 +1418,11 @@ function generateHtmlReport(title, studentName, rows, hasMissing, subjectName, m
     html += `</div>`;
   } else if (!hasMissing) {
     const msg = messages[Math.floor(Math.random() * messages.length)];
+    const statusLine = buildFormativeCelebrationStatus(rows, subjectName);
     html += `<div style="text-align: center; margin: 20px 0; padding: 15px; background-color: #e8f5e9; border-radius: 5px;">`;
     html += `<h3 style="color: #2E7D32; margin: 0;">${msg}</h3>`;
-    html += `<p style="color: #555; font-size: 12px; margin-top: 5px;">Status: No missing formative work. Nothing is owed at this time.</p></div>`;
+    html += `<p style="color: #555; font-size: 12px; margin-top: 5px; margin-bottom: 0;">${statusLine}</p></div>`;
+    html += generateHtmlLabCelebration(rows, subjectName);
   }
 
   html += generateHtmlSummaryStats(rows);
@@ -1328,15 +1431,12 @@ function generateHtmlReport(title, studentName, rows, hasMissing, subjectName, m
   if (rows.length > 0) {
     const filteredRows = rows.filter(r => !r.isSummaryStat);
 
-    if (subjectName === "Chemistry") {
+    if (subjectName === "Chemistry" || subjectName === "XL Chemistry") {
       const summativeRows = filteredRows.filter(r => r.isSummativeStandard);
       const otherRows = filteredRows.filter(r => !r.isSummativeStandard);
 
       if (otherRows.length > 0) html += generateHtmlTables(otherRows);
-      if (summativeRows.length > 0) {
-        html += `<h4 style="margin-top: 20px; border-bottom: 1px solid #ccc; padding-bottom: 3px; color: #444;">Summative Standard Mastery:</h4>`;
-        html += generateHtmlTables(summativeRows);
-      }
+      if (summativeRows.length > 0) html += generateHtmlTables(summativeRows);
     } else {
       html += generateHtmlTables(filteredRows);
     }
@@ -1559,6 +1659,96 @@ function printLabStandardNoteDoc(body, rows, subjectName, isParent) {
   if (note.status) {
     body.appendParagraph(note.status).setBold(false).setFontSize(10).setForegroundColor('#333333');
   }
+}
+
+/** Celebration messages for AP Biology students whose labs are all at 4 (MWD). */
+const LAB_MWD_MESSAGES = [
+  "🔬 Lab-solutely legendary! Every lab is at Meeting with Distinction!",
+  "🥽 Golden Goggles Award! You've hit Meeting with Distinction on every lab!",
+  "🧪 Peer-review ready! Every lab on this report is at Meeting with Distinction!",
+  "🧬 Nobel Prize committee, take note \u2014 all of your labs are at Meeting with Distinction!",
+  "🧫 Pipette perfection! Every single lab is sitting at Meeting with Distinction!",
+  "📊 Statistical significance achieved: 100% of your labs are at Meeting with Distinction!",
+  "🦠 A true culture of excellence! Every lab on this report is at Meeting with Distinction!",
+  "⚡ Maximum activation energy! All of your labs have reached Meeting with Distinction!"
+];
+
+/**
+ * Builds the status subtitle under the formative-work celebration pun.
+ *
+ * When an AP Biology student has all formative work in, but one or more labs
+ * are below 4 (Meeting with Distinction), the subtitle explicitly notes the
+ * labs still below 4 rather than saying "Nothing is owed at this time."
+ */
+function buildFormativeCelebrationStatus(rows, subjectName) {
+  if (subjectName === "AP Biology") {
+    const labs = rows.filter(function (r) { return r.isRubricScored && !r.isSummaryStat; });
+    const below = labs.filter(function (r) {
+      return r.rawScore !== null && r.rawScore !== undefined && r.rawScore < 4;
+    });
+    if (below.length === 1) {
+      return "Status: No missing formative work! Note: 1 lab on this report is not yet at " +
+             "Meeting with Distinction (4) \u2014 see the lab note below about revising it before the end of the semester.";
+    }
+    if (below.length > 1) {
+      return `Status: No missing formative work! Note: ${below.length} labs on this report are not yet at ` +
+             `Meeting with Distinction (4) \u2014 see the lab note below about revising them before the end of the semester.`;
+    }
+  }
+  return "Status: No missing formative work. Nothing is owed at this time.";
+}
+
+/**
+ * Builds a second celebration banner when an AP Biology report has at least one
+ * scored lab and every lab on the report is at 4 (Meeting with Distinction).
+ */
+function buildLabCelebration(rows, subjectName) {
+  if (subjectName !== "AP Biology") return null;
+
+  const labs = rows.filter(function (r) { return r.isRubricScored && !r.isSummaryStat; });
+  if (labs.length === 0) return null;
+
+  const scored = labs.filter(function (r) {
+    return r.rawScore !== null && r.rawScore !== undefined;
+  });
+  if (scored.length === 0 || scored.length !== labs.length) return null;
+
+  const allAtFour = scored.every(function (r) { return r.rawScore >= 4; });
+  if (!allAtFour) return null;
+
+  const msg = LAB_MWD_MESSAGES[Math.floor(Math.random() * LAB_MWD_MESSAGES.length)];
+  const subtitle = scored.length === 1
+    ? "Lab Mastery: Your lab on this report is at 4 (Meeting with Distinction)!"
+    : `Lab Mastery: All ${scored.length} labs on this report are at 4 (Meeting with Distinction)!`;
+
+  return { message: msg, subtitle: subtitle, count: scored.length };
+}
+
+/**
+ * Renders the second celebration banner for all-MWD labs as HTML, or "".
+ */
+function generateHtmlLabCelebration(rows, subjectName) {
+  const cel = buildLabCelebration(rows, subjectName);
+  if (!cel) return "";
+
+  let html = `<div style="text-align: center; margin: 12px 0 20px 0; padding: 14px; background-color: #e0f2f1; border: 1px solid #80cbc4; border-radius: 5px;">`;
+  html += `<h3 style="color: #00695c; margin: 0;">${cel.message}</h3>`;
+  html += `<p style="color: #004d40; font-size: 12px; margin-top: 5px; margin-bottom: 0;">${cel.subtitle}</p>`;
+  html += `</div>`;
+  return html;
+}
+
+/**
+ * Appends the second celebration banner for all-MWD labs to a Doc report.
+ */
+function printLabCelebrationDoc(body, rows, subjectName) {
+  const cel = buildLabCelebration(rows, subjectName);
+  if (!cel) return;
+
+  const pMsg = body.appendParagraph(`\n${cel.message}`);
+  pMsg.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setFontSize(13).setBold(true).setForegroundColor('#00695c');
+  const pSub = body.appendParagraph(cel.subtitle);
+  pSub.setAlignment(DocumentApp.HorizontalAlignment.CENTER).setFontSize(10).setBold(false).setForegroundColor('#004d40');
 }
 
 /**
