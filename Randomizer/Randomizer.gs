@@ -104,7 +104,14 @@ function randomizeSocialMixer() {
  *
  * Two stored formats are supported:
  *   Legacy: 6                        (a bare table count)
- *   Full:   { tables: [{label, seats}, ...], fillStrategy, fillPriority }
+ *   Full:   { tables: [{label, seats}, ...], fillStrategy, fillPriority, seatFormat }
+ *
+ * Seat values in the normalized result:
+ *   null - no limit (the cell was left blank)
+ *   0    - table is closed; nobody is seated there
+ *   N    - hard cap of N students
+ * Configs saved before seatFormat 2 stored "no limit" as 0, so for those a 0
+ * still reads as "no limit" until the room is next saved from the dialog.
  *
  * @param {number|string|Object} raw - The stored value for a single room.
  * @returns {Object|null} { tables, fillStrategy, fillPriority }, or null if unset.
@@ -117,9 +124,10 @@ function normalizeRoomConfig(raw) {
         const count = parseInt(raw, 10);
         if (!count || count < 1) return null;
         return {
-            tables: Array.from({ length: count }, (_, i) => ({ label: String(i + 1), seats: 0 })),
+            tables: Array.from({ length: count }, (_, i) => ({ label: String(i + 1), seats: null })),
             fillStrategy: 'spread',
-            fillPriority: 'forward'
+            fillPriority: 'forward',
+            seatFormat: SEAT_FORMAT
         };
     }
 
@@ -129,9 +137,12 @@ function normalizeRoomConfig(raw) {
         return normalizeRoomConfig(raw.count || 0);
     }
 
+    const zeroMeansClosed = (raw.seatFormat === SEAT_FORMAT);
     const tables = rawTables.map((t, i) => {
         const rawLabel = (t && t.label !== undefined && t.label !== null) ? String(t.label).trim() : '';
-        const seats = (t && parseInt(t.seats, 10) > 0) ? parseInt(t.seats, 10) : 0; // 0 = no limit
+        let seats = t ? parseInt(t.seats, 10) : NaN;
+        if (isNaN(seats) || seats < 0) seats = null;          // blank = no limit
+        else if (seats === 0 && !zeroMeansClosed) seats = null; // legacy: 0 meant no limit
         return { label: rawLabel || String(i + 1), seats: seats };
     });
 
@@ -141,8 +152,17 @@ function normalizeRoomConfig(raw) {
     return {
         tables: tables,
         fillStrategy: (raw.fillStrategy === 'pack') ? 'pack' : 'spread',
-        fillPriority: priority
+        fillPriority: priority,
+        seatFormat: SEAT_FORMAT
     };
+}
+
+/** Stored-config version in which a seat count of 0 means "table closed". */
+const SEAT_FORMAT = 2;
+
+/** True if the table has been closed (seat count set to 0). */
+function isTableClosed(table) {
+    return table.seats === 0;
 }
 
 /**
@@ -190,20 +210,22 @@ function computeTargetCapacities(roomConfig, studentCount, minPerTable) {
     const capacities = Array(n).fill(0);
     if (studentCount <= 0 || n === 0) return { capacities: capacities, unseated: 0, tablesUsed: 0 };
 
-    const order = buildFillOrder(roomConfig);
+    // Closed tables (seats = 0) never receive students, so leave them out entirely.
+    const order = buildFillOrder(roomConfig).filter(i => !isTableClosed(roomConfig.tables[i]));
+    if (order.length === 0) return { capacities: capacities, unseated: studentCount, tablesUsed: 0 };
 
     // Minimum group size caps how many tables we're allowed to open at all.
     // Tables are dropped from the BACK of the fill order, not the back of the room.
-    let usableCount = n;
+    let usableCount = order.length;
     if (minPerTable > 0) {
-        usableCount = Math.max(1, Math.min(n, Math.floor(studentCount / minPerTable)));
+        usableCount = Math.max(1, Math.min(order.length, Math.floor(studentCount / minPerTable)));
     }
     const usable = order.slice(0, usableCount);
 
     // A table with no explicit seat count is treated as "an even share" so that
     // Pack mode doesn't dump the entire class at the first table.
     const evenShare = Math.ceil(studentCount / usable.length);
-    const seatLimit = roomConfig.tables.map(t => t.seats > 0 ? t.seats : null);
+    const seatLimit = roomConfig.tables.map(t => t.seats === null ? null : t.seats);
 
     let remaining = studentCount;
 
@@ -245,7 +267,7 @@ function computeTargetCapacities(roomConfig, studentCount, minPerTable) {
 function getRoomSeatTotal(roomConfig) {
     let total = 0;
     for (const t of roomConfig.tables) {
-        if (!t.seats) return null;
+        if (t.seats === null) return null;
         total += t.seats;
     }
     return total;
@@ -313,6 +335,7 @@ function configureTables() {
             tables: normalized ? normalized.tables : [],
             fillStrategy: normalized ? normalized.fillStrategy : 'spread',
             fillPriority: normalized ? normalized.fillPriority : 'forward',
+            seatFormat: SEAT_FORMAT, // tables above are already normalized, so 0 now means closed
             min: (capacityConstraints[room] && capacityConstraints[room].min) || 0
         };
     });
@@ -345,7 +368,8 @@ function saveTableConfig(payload) {
         tableConfig[room] = {
             tables: normalized.tables,
             fillStrategy: normalized.fillStrategy,
-            fillPriority: normalized.fillPriority
+            fillPriority: normalized.fillPriority,
+            seatFormat: SEAT_FORMAT
         };
 
         const min = parseInt(entry.min, 10) || 0;
@@ -574,7 +598,7 @@ function buildTableConfigHtml(data) {
         <h3>Detailed Table Configuration</h3>
         <div class="desc">
             Tables print left-to-right in the order listed below. <b>Label</b> is what appears on the chart (a number, a letter, or a name like "Window Bench").
-            <b>Seats</b> is a hard cap on that table &mdash; leave it blank for no limit.
+            <b>Seats</b> is a hard cap on that table &mdash; leave it blank for no limit, or enter <b>0</b> to close the table so nobody is seated there.
             <b>Fill priority</b> controls which tables get students first, independently of print order &mdash; use <i>Reverse</i> for a room whose physical numbering runs backwards.
         </div>
         <div id="rooms"></div>
@@ -685,8 +709,8 @@ function buildTableConfigHtml(data) {
             seatBox.id = 'bulkseats_' + cssId(room);
             quick.appendChild(seatBox);
             quick.appendChild(chipButton('Apply', () => {
-                const v = parseInt(seatBox.value, 10);
-                cfg.tables.forEach(t => t.seats = (v > 0 ? v : 0));
+                const v = parseSeats(seatBox.value);
+                cfg.tables.forEach(t => t.seats = v);
                 render();
             }));
             body.appendChild(quick);
@@ -717,7 +741,7 @@ function buildTableConfigHtml(data) {
                 tr.appendChild(labelCell);
 
                 const seatCell = document.createElement('td');
-                const seatIn = numberInput(t.seats || '', 0, v => { t.seats = v; updateSummary(room); });
+                const seatIn = seatInput(t.seats, v => { t.seats = v; updateSummary(room); });
                 seatIn.className = 'seats-input';
                 seatIn.placeholder = 'any';
                 seatCell.appendChild(seatIn);
@@ -744,12 +768,19 @@ function buildTableConfigHtml(data) {
             const cfg = CONFIGS[room];
             const load = DATA.roomLoad[room] || 0;
 
-            let capped = 0, uncapped = 0, total = 0;
+            let capped = 0, uncapped = 0, closed = 0, total = 0;
             cfg.tables.forEach(t => {
-                if (t.seats > 0) { capped++; total += t.seats; } else { uncapped++; }
+                if (t.seats === null || t.seats === undefined) uncapped++;
+                else if (t.seats === 0) closed++;
+                else { capped++; total += t.seats; }
             });
 
-            let text = cfg.tables.length + ' table(s). ';
+            let text = cfg.tables.length + ' table(s)' + (closed > 0 ? ' (' + closed + ' closed)' : '') + '. ';
+            if (closed === cfg.tables.length) {
+                el.className = 'summary warn';
+                el.textContent = text + '⚠ Every table is closed — nobody can be seated in this room.';
+                return;
+            }
             if (uncapped > 0) {
                 text += capped > 0
                     ? (total + ' seats across ' + capped + ' capped table(s); ' + uncapped + ' uncapped.')
@@ -772,7 +803,7 @@ function buildTableConfigHtml(data) {
 
             while (cfg.tables.length > count) cfg.tables.pop();
             while (cfg.tables.length < count) {
-                cfg.tables.push({ label: String(cfg.tables.length + 1), seats: 0 });
+                cfg.tables.push({ label: String(cfg.tables.length + 1), seats: null });
             }
             // A custom priority list referring to removed tables is no longer meaningful.
             if (Array.isArray(cfg.fillPriority)) {
@@ -842,6 +873,21 @@ function buildTableConfigHtml(data) {
             el.min = String(min);
             el.value = (value === '' || value === null || value === undefined) ? '' : String(value);
             el.onchange = () => onChange(parseInt(el.value, 10) || 0);
+            return el;
+        }
+
+        // Seat cells keep blank (null = no limit) distinct from 0 (table closed).
+        function parseSeats(raw) {
+            const v = parseInt(String(raw).trim(), 10);
+            return (isNaN(v) || v < 0) ? null : v;
+        }
+
+        function seatInput(value, onChange) {
+            const el = document.createElement('input');
+            el.type = 'number';
+            el.min = '0';
+            el.value = (value === null || value === undefined) ? '' : String(value);
+            el.onchange = () => onChange(parseSeats(el.value));
             return el;
         }
 
@@ -2160,8 +2206,16 @@ function generateRandomization(options = {}) {
         activeStudents.forEach(student => {
             if (!prefsForSection[student.name]) return;
 
-            const candidates = prefTableIndexes[student.name];
-            if (!candidates || candidates.length === 0) {
+            const named = prefTableIndexes[student.name] || [];
+            const candidates = named.filter(i => !isTableClosed(roomConfig.tables[i]));
+            if (named.length > 0 && candidates.length === 0) {
+                ruleWarnings.push({
+                    sectionName: sectionName,
+                    message: `${student.name}'s preferential seating names only closed table(s) (${named.map(labelOf).join(', ')}) — seated at random instead`
+                });
+                return;
+            }
+            if (candidates.length === 0) {
                 // Every table this rule names is gone (renamed or removed). The
                 // student still gets seated by the normal pass, so this is a
                 // warning about the rule, not a placement failure.
@@ -2269,15 +2323,18 @@ function generateRandomization(options = {}) {
                 }
             } else {
                 // Couldn't find a table with enough room — place at the table with most space
-                let maxSpace = -1;
-                let fallbackTable = 0;
+                let maxSpace = -Infinity;
+                let fallbackTable = -1; // stays -1 only if every table is closed
                 for (let t = 0; t < numTables; t++) {
+                    if (isTableClosed(roomConfig.tables[t])) continue;
                     const space = targetCapacities[t] - tableAssignments[t].length;
                     if (space > maxSpace) {
                         maxSpace = space;
                         fallbackTable = t;
                     }
                 }
+                // No open table at all: leave them for Step 3, which reports them as unplaced.
+                if (fallbackTable < 0) continue;
                 for (const member of unplacedMembers) {
                     tableAssignments[fallbackTable].push(member);
                     placedByBuddyStep.add(member.name);
@@ -3819,7 +3876,7 @@ function buildTutorialHtml() {
             <ul>
                 <li><b># Tables</b> &mdash; how many table groups the room has. They print left-to-right in the listed order.</li>
                 <li><b>Label</b> &mdash; what each table is called on the chart. A number, a letter, or a name like "Window Bench".</li>
-                <li><b>Seats</b> &mdash; a hard cap on that table. Leave blank for no limit. Students beyond the room's total seats are reported rather than squeezed in.</li>
+                <li><b>Seats</b> &mdash; a hard cap on that table. Leave blank for no limit, or enter 0 to close the table (nobody is seated there, and preferential seating won't override it). Students beyond the room's total seats are reported rather than squeezed in.</li>
                 <li><b>Fill Priority</b> &mdash; which tables get students first, <i>independently</i> of print order. Use <b>Reverse</b> for a room whose physical numbering runs backwards, or <b>Custom</b> to type your own order.</li>
                 <li><b>Fill Strategy</b> &mdash; <i>Spread</i> keeps every table as even as possible; <i>Pack</i> fills each table to its seat count in priority order and leaves the rest empty.</li>
                 <li><b>Min Group Size</b> &mdash; keeps groups from getting too small by using fewer tables. Tables drop off the end of the fill priority.</li>

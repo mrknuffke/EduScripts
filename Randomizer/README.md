@@ -9,7 +9,7 @@ Randomizer is a comprehensive classroom management tool for Google Sheets. It fa
 -   **Roster Setup Wizard**: Easily configure sections, rooms, and attributes.
 -   **Room Layout**: Describe each room as it actually is.
     -   **Table Labels**: Name tables however you like — numbers, letters, or names such as "Window Bench".
-    -   **Seat Counts**: Set a hard per-table capacity. Students beyond the room's total seats are reported, never silently squeezed in.
+    -   **Seat Counts**: Set a hard per-table capacity. Leave blank for no limit, or enter `0` to close a table so nobody is seated there. Students beyond the room's total seats are reported, never silently squeezed in.
     -   **Fill Priority**: Choose which tables fill first, independently of the order they print in — useful for rooms whose physical numbering runs backwards.
     -   **Fill Strategy**: *Spread* keeps tables even; *Pack* fills tables to their seat count in priority order and leaves the rest empty.
 -   **Randomization**: Assign students to tables/groups with sophisticated constraints.
